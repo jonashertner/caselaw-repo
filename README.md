@@ -15,9 +15,12 @@ Choose your preferred installation method:
 ### Option A: One-Click Install (No Terminal)
 
 1. [Download ZIP](https://github.com/jonashertner/caselaw-repo/archive/refs/heads/main.zip) and unzip
-2. Double-click **`install-mac.command`** (Mac) or **`install-windows.bat`** (Windows)
+2. **Mac**: Right-click `install-mac.command` → select **Open** → click **Open** in the dialog
+   **Windows**: Double-click `install-windows.bat`
 3. Wait for setup (~15 GB download on first run)
 4. A Desktop shortcut is created — double-click anytime to launch
+
+> **Mac users**: The "Open" dialog appears because the script is not signed. This is normal for downloaded scripts. You only need to do this once.
 
 ### Option B: Command Line
 

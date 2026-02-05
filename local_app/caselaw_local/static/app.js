@@ -126,7 +126,11 @@ function setSummary() {
 }
 
 function setPageInfo() {
-  $("#pageInfo").textContent = `Page ${state.page}`;
+  const totalPages = Math.max(1, Math.ceil(state.total / state.page_size));
+  const pageText = state.total_capped
+    ? `Page ${state.page} of ${totalPages}+`
+    : `Page ${state.page} of ${totalPages}`;
+  $("#pageInfo").textContent = pageText;
 }
 
 function chip(label, count, active, onClick) {
@@ -362,12 +366,25 @@ async function doSearch() {
 
 function showLoading(isLoading) {
   const indicator = $("#loadingIndicator");
+  const loadingText = indicator?.querySelector("span");
   const summary = $("#summary");
+  const list = $("#list");
+
   if(indicator) {
     indicator.classList.toggle("hidden", !isLoading);
   }
-  if(summary && isLoading) {
-    summary.textContent = "";
+  // Update loading text based on whether there's a search query
+  if(loadingText) {
+    loadingText.textContent = state.q.trim() ? "Searching..." : "Loading dataset...";
+  }
+  // Hide summary while loading
+  if(summary) {
+    summary.classList.toggle("hidden", isLoading);
+  }
+  // Dim the results list while loading
+  if(list) {
+    list.style.opacity = isLoading ? "0.5" : "1";
+    list.style.pointerEvents = isLoading ? "none" : "auto";
   }
 }
 
@@ -483,14 +500,7 @@ function bindInputs() {
     state.q = ev.target.value;
     state.page = 1;
     scheduleSearch(220);
-    // Show suggestions while typing (before search completes)
-    scheduleSuggest();
-  });
-
-  // Hide suggestions when focus leaves search input
-  $("#q").addEventListener("blur", ()=>{
-    // Delay to allow clicking on suggestions
-    setTimeout(hideSuggest, 200);
+    // Autocomplete disabled - suggestions were causing UX issues
   });
 
   $("#sort").addEventListener("change", (ev)=>{

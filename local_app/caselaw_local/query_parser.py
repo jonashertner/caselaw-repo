@@ -135,42 +135,57 @@ def _check_parentheses(query: str) -> Optional[QueryValidationResult]:
 
 def _check_operators(query: str) -> Optional[QueryValidationResult]:
     """Check for invalid operator usage."""
-    # Remove quoted strings for operator checking
-    without_quotes = re.sub(r'"[^"]*"', ' ', query)
-    without_quotes = re.sub(r"'[^']*'", ' ', without_quotes)
+    # Replace quoted strings with placeholder to preserve position for operator checking
+    without_quotes = re.sub(r'"[^"]*"', ' _TERM_ ', query)
+    without_quotes = re.sub(r"'[^']*'", ' _TERM_ ', without_quotes)
 
-    tokens = without_quotes.split()
+    tokens = [t for t in without_quotes.split() if t]
 
     for i, token in enumerate(tokens):
         upper = token.upper()
 
+        # Skip placeholder tokens (they represent quoted phrases)
+        if token == "_TERM_":
+            continue
+
         # Check for operators at start/end
         if upper in FTS5_OPERATORS:
-            if i == 0 and upper in ("AND", "OR"):
+            # Check if there are any terms (including placeholders) before this operator
+            has_preceding = i > 0 and len(tokens[:i]) > 0
+            if not has_preceding and upper in ("AND", "OR"):
                 return QueryValidationResult(
                     valid=False,
                     error=f"Query cannot start with {upper}",
-                    suggestion=' '.join(tokens[1:]) if len(tokens) > 1 else None,
+                    suggestion=' '.join(t for t in tokens[1:] if t != "_TERM_") or None,
                     sanitized=None
                 )
-            if i == len(tokens) - 1 and upper in ("AND", "OR", "NOT"):
+            # Check if there are any terms (including placeholders) after this operator
+            has_following = i < len(tokens) - 1 and len(tokens[i+1:]) > 0
+            if not has_following and upper in ("AND", "OR", "NOT"):
                 return QueryValidationResult(
                     valid=False,
                     error=f"Query cannot end with {upper}",
-                    suggestion=' '.join(tokens[:-1]) if len(tokens) > 1 else None,
+                    suggestion=' '.join(t for t in tokens[:-1] if t != "_TERM_") or None,
                     sanitized=None
                 )
 
-        # Check for consecutive operators
+        # Check for consecutive operators (ignoring placeholders)
         if i > 0:
-            prev_upper = tokens[i-1].upper()
-            if upper in FTS5_OPERATORS and prev_upper in FTS5_OPERATORS:
-                return QueryValidationResult(
-                    valid=False,
-                    error=f"Consecutive operators: {prev_upper} {upper}",
-                    suggestion=None,
-                    sanitized=None
-                )
+            # Find previous non-placeholder token
+            prev_token = None
+            for j in range(i - 1, -1, -1):
+                if tokens[j] != "_TERM_":
+                    prev_token = tokens[j]
+                    break
+            if prev_token:
+                prev_upper = prev_token.upper()
+                if upper in FTS5_OPERATORS and prev_upper in FTS5_OPERATORS:
+                    return QueryValidationResult(
+                        valid=False,
+                        error=f"Consecutive operators: {prev_upper} {upper}",
+                        suggestion=None,
+                        sanitized=None
+                    )
 
     return None
 

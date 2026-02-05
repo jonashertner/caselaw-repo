@@ -148,7 +148,7 @@ def search(
         order = "decision_date DESC" if sort in ("relevance", "date_desc") else "decision_date ASC"
         rows = conn.execute(
             f"""
-            SELECT id, source_name, canton, level, language, docket, decision_date, published_date AS publication_date, title, url, pdf_url,
+            SELECT id, source_name, canton, level, language, docket, decision_date, publication_date, title, url, pdf_url,
                    substr(content_text, 1, 300) AS snippet
             FROM decisions
             WHERE {where}
@@ -223,7 +223,7 @@ def search(
           FROM filtered
         )
         SELECT d.id, d.source_name, d.canton, d.level, d.language, d.docket,
-               d.decision_date, d.published_date AS publication_date, d.title, d.url, d.pdf_url,
+               d.decision_date, d.publication_date, d.title, d.url, d.pdf_url,
                snippet(decisions_fts, 2, '<mark>', '</mark>', '…', 24) AS snippet,
                ranked.final_rank AS rank
         FROM ranked
@@ -383,7 +383,7 @@ def get_doc(conn: sqlite3.Connection, doc_id: str) -> Optional[Dict[str, Any]]:
     row = conn.execute(
         """
         SELECT id, source_id, source_name, level, canton, court, chamber, language, docket,
-               decision_date, published_date AS publication_date, title, url, pdf_url, content_text, fetched_at, updated_at
+               decision_date, publication_date, title, url, pdf_url, content_text, fetched_at, updated_at
         FROM decisions
         WHERE id = ?
         LIMIT 1;

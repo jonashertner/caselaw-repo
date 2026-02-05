@@ -140,12 +140,16 @@ a{color:inherit}
 
 .sidebar, .results, .detail{min-height:0}
 
+.sidebar{
+  overflow-y: auto;
+}
+
 .panel{
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding:14px;
-  height:100%;
+  min-height: 100%;
   display:flex;
   flex-direction:column;
   gap:12px;
@@ -153,8 +157,8 @@ a{color:inherit}
 .panel-title{font-weight:700}
 .panel-foot{margin-top:auto; padding-top:10px; border-top:1px solid var(--border)}
 
-.field{display:flex; flex-direction:column; gap:6px}
-.field label{color:var(--muted); font-size:12px}
+.field{display:flex; flex-direction:column; gap:6px; margin-bottom: 4px}
+.field label{color:var(--muted); font-size:12px; margin-bottom: 2px}
 .field input[type="date"], .field select{
   padding:10px 10px;
   border-radius: 12px;
@@ -514,33 +518,37 @@ mark{background: rgba(139,211,255,0.25); color: var(--text); padding:0 2px; bord
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: nowrap;
 }
 .date-input-wrap{
   flex: 1;
   position: relative;
+  min-width: 0;
 }
 .date-input-wrap input[type="date"]{
   width: 100%;
   padding-right: 28px;
+  font-size: 12px;
 }
 .date-clear{
   position: absolute;
-  right: 6px;
+  right: 4px;
   top: 50%;
   transform: translateY(-50%);
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   padding: 0;
   border: none;
   background: var(--panel2);
   color: var(--muted);
   border-radius: 50%;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 10px;
   line-height: 1;
   display: flex;
   align-items: center;
   justify-content: center;
+  z-index: 1;
 }
 .date-clear:hover{
   background: var(--danger);

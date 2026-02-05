@@ -148,7 +148,27 @@ The database is stored at:
 
 ### Sources
 
-[entscheidsuche.ch](https://entscheidsuche.ch), Bundesgericht, Bundesverwaltungsgericht, Bundespatentgericht, Bundesstrafgericht, all 26 cantonal courts.
+All decisions are scraped from official Swiss court portals:
+
+**Federal courts:**
+- Bundesgericht (BGer)
+- Bundesverwaltungsgericht (BVGer)
+- Bundesstrafgericht (BStGer)
+- Bundespatentgericht (BPatGer)
+
+**Cantonal courts:**
+All 26 cantons — sourced via [entscheidsuche.ch](https://entscheidsuche.ch), which aggregates cantonal court publications.
+
+### Automated Updates
+
+Updates run via GitHub Actions:
+
+| Schedule | Action |
+|----------|--------|
+| **Daily** (02:15 UTC) | Scrape new decisions, build delta, publish to HuggingFace |
+| **Weekly** (Sunday 03:30 UTC) | Consolidate deltas into new snapshot |
+
+Run `caselaw-local update` to download the latest snapshot.
 
 ---
 

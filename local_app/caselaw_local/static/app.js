@@ -61,15 +61,37 @@ function initTheme() {
 function ftsHelpHtml() {
   return `
   <div class="muted">
-    <p>Query supports SQLite FTS5 syntax.</p>
+    <h3 style="margin-top:0">Search Syntax</h3>
     <pre><code>phrase search: "steuerpflicht"
 boolean: steuer AND veranlagung
-prefix: veranlag* 
-column: title:"rückerstattung" 
-column: docket:6B_123
-grouping: (steuer OR abgabe) AND kanton:ZH</code></pre>
-    <p>Filters on the left apply on top of full‑text matching.</p>
-    <p class="mono">Keyboard: / focus · j/k navigate · enter open · esc close</p>
+either: steuer OR abgabe
+prefix: veranlag*
+title only: title:"rückerstattung"
+docket: docket:6B_123
+combined: (steuer OR abgabe) AND title:BGE</code></pre>
+
+    <h3>Filters</h3>
+    <p>Use the sidebar filters for date range, language, canton, and court level (federal/cantonal).</p>
+
+    <h3>Citation Links</h3>
+    <p>Case references in the text (like BGE 140 III 264 or 6B_123/2024) are clickable — click to search for that decision.</p>
+
+    <h3>Keyboard Shortcuts</h3>
+    <table style="width:100%; font-size:13px">
+      <tr><td class="mono" style="width:80px">/</td><td>Focus search box</td></tr>
+      <tr><td class="mono">j / k</td><td>Navigate results down/up</td></tr>
+      <tr><td class="mono">Enter</td><td>Open selected result</td></tr>
+      <tr><td class="mono">Esc</td><td>Close panels and modals</td></tr>
+      <tr><td class="mono">Ctrl+P</td><td>Print current decision</td></tr>
+    </table>
+
+    <h3>Tips</h3>
+    <ul>
+      <li>Use <b>★</b> to save searches for later</li>
+      <li>Click <b>Export CSV</b> to download results</li>
+      <li>Use the <b>Query Builder</b> to construct complex searches visually</li>
+      <li>Search highlights appear in both snippets and full text</li>
+    </ul>
   </div>`;
 }
 
@@ -182,6 +204,83 @@ function renderResults() {
 
 function escapeHtml(s) {
   return (s||"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");
+}
+
+// Citation patterns for Swiss legal references
+const CITATION_PATTERNS = [
+  // BGE/ATF references: BGE 140 III 264, ATF 140 III 264
+  { regex: /\b(BGE|ATF|DTF)\s+(\d{1,3})\s+(I{1,3}[abAB]?|IV|V|VI)\s+(\d+)/g,
+    format: (m) => `"${m[1]} ${m[2]} ${m[3]} ${m[4]}"` },
+  // Federal court docket: 6B_123/2024, 4A_567/2023, 1C_89/2022
+  { regex: /\b([1-9][A-Z])[_\s](\d{1,4})\/(\d{4})\b/g,
+    format: (m) => `docket:${m[1]}_${m[2]}/${m[3]}` },
+  // Alternate docket format: 6B.123/2024
+  { regex: /\b([1-9][A-Z])\.(\d{1,4})\/(\d{4})\b/g,
+    format: (m) => `docket:${m[1]}_${m[2]}/${m[3]}` },
+];
+
+function linkifyCitations(html) {
+  let result = html;
+
+  for (const pattern of CITATION_PATTERNS) {
+    result = result.replace(pattern.regex, (match, ...groups) => {
+      const query = pattern.format(groups);
+      return `<a href="#" class="citation-link" data-query="${escapeHtml(query)}" title="Search for ${escapeHtml(match)}">${match}</a>`;
+    });
+  }
+
+  return result;
+}
+
+function handleCitationClick(e) {
+  if (e.target.classList.contains("citation-link")) {
+    e.preventDefault();
+    const query = e.target.dataset.query;
+    if (query) {
+      $("#q").value = query;
+      state.q = query;
+      state.page = 1;
+      scheduleSearch(0);
+      // Scroll to top to see results
+      window.scrollTo(0, 0);
+    }
+  }
+}
+
+function highlightSearchTerms(html, query) {
+  if (!query || !query.trim()) return html;
+
+  // Extract plain terms from query (ignore operators and field prefixes)
+  const terms = extractSearchTerms(query);
+  if (terms.length === 0) return html;
+
+  // Build regex to match any of the terms (case insensitive)
+  // Escape special regex characters
+  const escaped = terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const pattern = new RegExp(`(${escaped.join('|')})`, 'gi');
+
+  return html.replace(pattern, '<span class="search-highlight">$1</span>');
+}
+
+function extractSearchTerms(query) {
+  // Remove field prefixes like title:, docket:, content_text:
+  let q = query.replace(/\w+:/g, ' ');
+  // Remove operators
+  q = q.replace(/\b(AND|OR|NOT)\b/gi, ' ');
+  // Extract quoted phrases and individual words
+  const terms = [];
+  // Match quoted strings
+  const quoted = q.match(/"([^"]+)"/g);
+  if (quoted) {
+    quoted.forEach(m => terms.push(m.replace(/"/g, '')));
+  }
+  // Remove quoted parts and get remaining words
+  q = q.replace(/"[^"]*"/g, ' ');
+  // Get individual words (min 2 chars, ignore wildcards)
+  const words = q.split(/\s+/).filter(w => w.length >= 2 && !w.includes('*'));
+  terms.push(...words);
+
+  return terms.filter(t => t.length >= 2);
 }
 
 function toggleFilter(key, value) {
@@ -361,7 +460,12 @@ async function openIdx(idx, focus=true) {
     $("#detailUrl").href = url;
     $("#detailPdf").href = pdf;
     $("#detailPdf").classList.toggle("hidden", pdf==="#" || !pdf);
-    $("#detailBody").textContent = doc.content_text || "(no text extracted)";
+    // Render content with clickable citations and highlighted search terms
+    let content = doc.content_text || "(no text extracted)";
+    let html = escapeHtml(content);
+    html = highlightSearchTerms(html, state.q);
+    html = linkifyCitations(html);
+    $("#detailBody").innerHTML = html;
   } catch(e){
     toast("Open error", e.message || String(e));
   }
@@ -1103,9 +1207,19 @@ async function shareLink() {
 function bindCitationAndShare() {
   const btnCite = $("#btnCopyCite");
   const btnShare = $("#btnShareLink");
+  const btnPrint = $("#btnPrint");
 
   if(btnCite) btnCite.addEventListener("click", copyCitation);
   if(btnShare) btnShare.addEventListener("click", shareLink);
+  if(btnPrint) btnPrint.addEventListener("click", printDecision);
+}
+
+function printDecision() {
+  if(!state.selectedId) {
+    toast("No Selection", "Select a decision first");
+    return;
+  }
+  window.print();
 }
 
 // ============ URL State Handling ============
@@ -1134,8 +1248,17 @@ function init(){
   bindLevelToggle();
   bindExport();
   bindCitationAndShare();
+  bindCitationLinks();
   loadStatus();
   scheduleSearch(0);
+}
+
+function bindCitationLinks() {
+  // Event delegation for citation links in detail body
+  const detailBody = $("#detailBody");
+  if (detailBody) {
+    detailBody.addEventListener("click", handleCitationClick);
+  }
 }
 
 window.addEventListener("load", init);

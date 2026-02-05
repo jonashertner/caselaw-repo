@@ -278,6 +278,60 @@ mark{background: rgba(139,211,255,0.25); color: var(--text); padding:0 2px; bord
 .detail-body .mono{font-family:var(--mono); font-size:12px}
 .detail-body .pill{display:inline-block; padding:2px 8px; border:1px solid var(--border); border-radius:999px; margin-right:6px; color:var(--muted)}
 
+/* Citation links in decision text */
+.citation-link{
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--accent);
+  cursor: pointer;
+}
+.citation-link:hover{
+  color: var(--accent2);
+  border-bottom-color: var(--accent2);
+}
+
+/* Search term highlighting in full text */
+.search-highlight{
+  background: rgba(139,211,255,0.25);
+  color: var(--text);
+  padding: 1px 2px;
+  border-radius: 3px;
+}
+
+/* Print-friendly styles */
+@media print {
+  .topbar, .sidebar, .results, .pager, .detail-actions, .modal, .toast {
+    display: none !important;
+  }
+  .main {
+    display: block !important;
+  }
+  .detail {
+    position: static !important;
+    width: 100% !important;
+    height: auto !important;
+    border: none !important;
+    background: white !important;
+  }
+  .detail-body {
+    color: black !important;
+    font-size: 11pt !important;
+    line-height: 1.6 !important;
+  }
+  .detail-title {
+    font-size: 14pt !important;
+    color: black !important;
+  }
+  .detail-meta .pill {
+    border-color: #ccc !important;
+    color: #666 !important;
+  }
+  .citation-link {
+    color: black !important;
+    text-decoration: underline !important;
+  }
+}
+
 .modal{
   position:fixed;
   inset:0;

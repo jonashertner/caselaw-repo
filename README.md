@@ -1,6 +1,6 @@
 # Swiss Caselaw — Offline Legal Search
 
-Search 500,000+ Swiss court decisions locally on your computer. No account needed, no internet required after setup, completely private.
+Search Swiss federal and cantonal court decisions locally on your computer. No account needed, no internet required after setup, completely private.
 
 ## Quick Start (5 minutes)
 
@@ -75,10 +75,23 @@ Click **Export CSV** to download your search results as a spreadsheet. Includes:
 - Click **Saved** to view and reload saved searches
 - Searches are stored locally in your browser
 
-### Citations
+### Citation Linking
+Case references in the decision text are automatically detected and made clickable:
+- **BGE/ATF references**: `BGE 140 III 264` → click to search
+- **Docket numbers**: `6B_123/2024` → click to search
+- Makes it easy to follow legal citations and build understanding of related cases
+
+### Citations & Sharing
 Select any decision and use:
-- **Copy Citation**: Copy a formatted legal citation
+- **Copy Citation**: Copy a formatted legal citation (standard, BibTeX, or APA)
 - **Share**: Copy a link to share the search with others
+- **Print**: Print-friendly view of the decision
+
+### Search Highlighting
+Your search terms are highlighted:
+- In result snippets (list view)
+- In the full decision text (detail view)
+- Makes it easy to find relevant passages in long decisions
 
 ### Statistics Dashboard
 Click **Show Stats** in the sidebar to see:
@@ -97,6 +110,7 @@ Click **Show Stats** in the sidebar to see:
 | `j` / `k` | Navigate results (down/up) |
 | `Enter` | Open selected result |
 | `Esc` | Close modals |
+| `Ctrl+P` | Print current decision |
 
 ---
 

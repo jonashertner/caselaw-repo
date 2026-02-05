@@ -2,36 +2,56 @@
 
 Search Swiss federal and cantonal court decisions locally on your computer. No account needed, no internet required after setup, completely private.
 
-## Quick Start (5 minutes)
+## Installation (No Terminal Required)
 
 ### Requirements
-- macOS, Linux, or Windows with WSL
-- Python 3.10 or newer
+- macOS or Windows
+- Python 3.10+ ([download here](https://www.python.org/downloads/))
 - 20 GB free disk space
 
-### Installation
+### macOS
+
+1. [Download the repository](https://github.com/jonashertner/caselaw-repo/archive/refs/heads/main.zip) and unzip it
+2. Double-click **`install-mac.command`**
+3. Wait for setup to complete (downloads ~15 GB on first run)
+4. A shortcut appears on your Desktop — double-click to launch anytime
+
+### Windows
+
+1. [Download the repository](https://github.com/jonashertner/caselaw-repo/archive/refs/heads/main.zip) and unzip it
+2. Double-click **`install-windows.bat`**
+3. Wait for setup to complete (downloads ~15 GB on first run)
+4. A shortcut appears on your Desktop — double-click to launch anytime
+
+### After Installation
+
+- Double-click **Swiss Caselaw** on your Desktop
+- Your browser opens automatically to the search interface
+- Works offline after initial setup
+
+---
+
+<details>
+<summary><b>Alternative: Command Line Installation</b></summary>
 
 ```bash
-# 1. Clone the repository
+# Clone and install
 git clone https://github.com/jonashertner/caselaw-repo.git
 cd caselaw-repo/local_app
-
-# 2. Create a virtual environment
 python3 -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install -r requirements.txt && pip install -e .
 
-# 3. Install dependencies
-pip install -r requirements.txt
-pip install -e .
-
-# 4. Download the database (one-time, ~15 GB download)
+# Download database and start
 python -m caselaw_local.cli update
-
-# 5. Start the search server
 python -m caselaw_local.cli serve
 ```
 
-Open your browser to **http://127.0.0.1:8787** — that's it!
+Open http://127.0.0.1:8787 in your browser.
+
+</details>
+
+---
 
 ---
 

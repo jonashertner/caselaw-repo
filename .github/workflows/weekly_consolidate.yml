@@ -29,12 +29,16 @@ jobs:
           pip install -r pipeline/requirements.txt
           pip install -e pipeline
 
+      - name: Get current week
+        id: week
+        run: |
+          WEEK=$(python -c "import datetime as dt; y,w,_=dt.date.today().isocalendar(); print(f'{y}-W{w:02d}')")
+          echo "week=$WEEK" >> $GITHUB_OUTPUT
+
       - name: Consolidate weekly snapshot
         run: |
-          WEEK="$(python - <<'PY'
-import datetime as dt
-y,w,_=dt.date.today().isocalendar()
-print(f"{y}-W{w:02d}")
-PY
-)"
-          python -m caselaw_pipeline.cli consolidate-weekly --hf-repo "$HF_DATASET_REPO" --build-dir _build --week "$WEEK" --parquet
+          python -m caselaw_pipeline.cli consolidate-weekly \
+            --hf-repo "$HF_DATASET_REPO" \
+            --build-dir _build \
+            --week "${{ steps.week.outputs.week }}" \
+            --parquet

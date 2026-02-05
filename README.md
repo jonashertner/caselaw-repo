@@ -1,276 +1,165 @@
-# Swiss Caselaw — Offline Legal Search
+# Swiss Caselaw
 
-Search Swiss federal and cantonal court decisions locally on your computer. No account needed, no internet required after setup, completely private.
-
-## Requirements
-
-- macOS, Linux, or Windows
-- Python 3.10+ ([download here](https://www.python.org/downloads/))
-- 20 GB free disk space
+Offline access to 843,000+ Swiss federal and cantonal court decisions. Search locally, completely private, no internet required after setup.
 
 ## Quick Start
 
 ```bash
-# 1. Clone the repository
+# 1. Clone and install
 git clone https://github.com/jonashertner/caselaw-repo.git
 cd caselaw-repo/local_app
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e .
 
-# 2. Set up Python environment
-python3 -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -r requirements.txt && pip install -e .
-
-# 3. Download database (~15 GB, one-time)
-python -m caselaw_local.cli update
-
-# 4. Start the server
-python -m caselaw_local.cli serve
+# 2. Download database (~15 GB, one-time)
+caselaw-local update
 ```
 
-Open **http://127.0.0.1:8787** in your browser.
+---
+
+## Claude Code Integration
+
+Add to `~/.claude/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "swiss-caselaw": {
+      "command": "python3",
+      "args": ["/absolute/path/to/caselaw-repo/mcp_server/server.py"]
+    }
+  }
+}
+```
+
+Restart Claude Code. Then ask in natural language:
+
+```
+Search for data protection cases from the Federal Supreme Court
+```
+
+```
+Find decisions citing BGE 140 III 264
+```
+
+```
+Show recent criminal law cases from Zurich involving fraud
+```
+
+```
+Finde Entscheide betreffend Verfahrenseinstellung und Beschwerde der Privatklägerschaft
+```
+
+### MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `search_caselaw` | Full-text search with filters (language, canton, date, court level) |
+| `get_decision` | Get complete text of a decision by ID |
+| `find_citing_decisions` | Find cases citing a specific reference (e.g., `BGE 140 III 264`) |
+| `get_caselaw_statistics` | Database coverage and statistics |
+
+### Search Parameters
+
+| Parameter | Description |
+|-----------|-------------|
+| `query` | Search query (supports `AND`, `OR`, `NOT`, `"phrases"`, `field:value`, `prefix*`) |
+| `language` | `de`, `fr`, `it`, `rm` |
+| `canton` | `ZH`, `BE`, `GE`, `VD`, `TI`, etc. |
+| `level` | `federal` or `cantonal` |
+| `date_from` / `date_to` | Date range (YYYY-MM-DD) |
+| `limit` | Max results (default 20, max 100) |
+
+### Custom Database Path
+
+```json
+{
+  "mcpServers": {
+    "swiss-caselaw": {
+      "command": "python3",
+      "args": ["/path/to/mcp_server/server.py"],
+      "env": {
+        "CASELAW_DB_PATH": "/custom/path/caselaw.sqlite"
+      }
+    }
+  }
+}
+```
 
 ---
 
+## Web Interface
+
+```bash
+caselaw-local serve
+```
+
+Open **http://127.0.0.1:8787**
+
+**Features:**
+- Full-text search with Boolean operators
+- Filter by date, language, canton, court level
+- Export results to CSV
+- Save searches locally
+- Clickable citation links
+- Keyboard navigation (`/` to search, `j`/`k` to navigate)
+
 ---
 
-## Features
+## Search Syntax
 
-### Full-Text Search
-Search across all Swiss federal and cantonal court decisions using powerful query syntax:
-
-| Query | What it finds |
-|-------|---------------|
-| `steuerpflicht` | Decisions containing "steuerpflicht" |
-| `"bundesgericht zürich"` | Exact phrase match |
-| `steuer AND veranlagung` | Both terms must appear |
+| Query | Matches |
+|-------|---------|
+| `steuerpflicht` | Contains "steuerpflicht" |
+| `"bundesgericht zürich"` | Exact phrase |
+| `steuer AND veranlagung` | Both terms |
 | `steuer OR abgabe` | Either term |
-| `veranlag*` | Prefix matching |
-| `title:"rückerstattung"` | Search only in title |
-| `docket:6B_123` | Search by docket number |
-
-### Filters
-- **Date range**: Filter by decision date with quick presets (1 year, 5 years, 10 years)
-- **Level**: Federal courts, cantonal courts, or both
-- **Language**: German, French, Italian, Romansh
-- **Canton**: Filter by canton (ZH, BE, GE, etc.)
-- **Court/Source**: Filter by specific court
-
-### Query Builder
-Click **Builder** next to the search box for a visual query constructor:
-- Select fields (title, docket, content)
-- Add multiple conditions
-- Choose AND/OR operators
-- Preview the generated query
-
-### Export Results
-Click **Export CSV** to download your search results as a spreadsheet. Includes:
-- Decision ID, docket, title
-- Date, court, canton, language
-- Source URL and PDF link
-
-### Save Searches
-- Click the **★** button to save your current search
-- Click **Saved** to view and reload saved searches
-- Searches are stored locally in your browser
-
-### Citation Linking
-Case references in the decision text are automatically detected and made clickable:
-- **BGE/ATF references**: `BGE 140 III 264` → click to search
-- **Docket numbers**: `6B_123/2024` → click to search
-- Makes it easy to follow legal citations and build understanding of related cases
-
-### Citations & Sharing
-Select any decision and use:
-- **Copy Citation**: Copy a formatted legal citation (standard, BibTeX, or APA)
-- **Share**: Copy a link to share the search with others
-- **Print**: Print-friendly view of the decision
-
-### Search Highlighting
-Your search terms are highlighted:
-- In result snippets (list view)
-- In the full decision text (detail view)
-- Makes it easy to find relevant passages in long decisions
-
-### Statistics Dashboard
-Click **Show Stats** in the sidebar to see:
-- Total decisions in database
-- Date coverage (earliest to latest)
-- Federal vs. cantonal split
-- Top languages and cantons
+| `veranlag*` | Prefix match |
+| `title:BGE` | Search title field |
+| `docket:6B_123` | Search docket number |
 
 ---
 
-## Keyboard Shortcuts
+## Database
 
-| Key | Action |
-|-----|--------|
-| `/` | Focus search box |
-| `j` / `k` | Navigate results (down/up) |
-| `Enter` | Open selected result |
-| `Esc` | Close modals |
-| `Ctrl+P` | Print current decision |
-
----
-
-## Updating the Database
-
-The database is updated weekly with new decisions. To get the latest:
+### Updates
 
 ```bash
-python -m caselaw_local.cli update
+caselaw-local update
 ```
 
-This downloads only what's changed since your last update.
+New decisions added weekly.
+
+### Coverage
+
+| Metric | Value |
+|--------|-------|
+| Total decisions | 843,970 |
+| Date range | 1901 – 2026 |
+| Federal courts | 374,512 |
+| Cantonal courts | 469,458 |
+| Languages | DE (55%), FR (35%), IT (10%) |
+
+### Location
+
+The database is stored at:
+- macOS: `~/Library/Application Support/swiss-caselaw/caselaw.sqlite`
+- Linux: `~/.local/share/swiss-caselaw/caselaw.sqlite`
+
+### Sources
+
+[entscheidsuche.ch](https://entscheidsuche.ch), Bundesgericht, Bundesverwaltungsgericht, Bundespatentgericht, Bundesstrafgericht, all 26 cantonal courts.
 
 ---
 
-## Configuration
+## Requirements
 
-### Custom Data Directory
-
-By default, data is stored in:
-- macOS: `~/Library/Application Support/swiss-caselaw/`
-- Linux: `~/.local/share/swiss-caselaw/`
-- Windows: `%APPDATA%\swiss-caselaw\`
-
-To use a different location:
-
-```bash
-export CASELAW_DATA_DIR="/path/to/your/data"
-```
-
-### Custom Port
-
-```bash
-python -m caselaw_local.cli serve --port 9000
-```
-
-### Using a Different Data Source
-
-```bash
-export CASELAW_MANIFEST_URL="https://your-server.com/manifest.json"
-```
+- Python 3.10+
+- 20 GB disk space
+- macOS, Linux, or Windows
 
 ---
 
-## Troubleshooting
+## License
 
-### "Dataset not installed"
-Run the update command first:
-```bash
-python -m caselaw_local.cli update
-```
-
-### Search is slow
-The first search after starting may take a few seconds while the database warms up. Subsequent searches should be fast (<100ms).
-
-### Not enough disk space
-The full database requires ~15-20 GB. Ensure you have sufficient free space before running `update`.
-
-### Port already in use
-If port 8787 is taken, use a different port:
-```bash
-python -m caselaw_local.cli serve --port 8788
-```
-
----
-
-## Data Sources
-
-This project aggregates decisions from:
-- **Federal courts**: Bundesgericht, Bundesverwaltungsgericht, Bundespatentgericht, Bundesstrafgericht
-- **Cantonal courts**: All 26 cantons where publicly available
-- **Source**: [entscheidsuche.ch](https://entscheidsuche.ch) and official court portals
-
-Data is refreshed weekly with daily incremental updates.
-
----
-
-## For Developers
-
-### Project Structure
-
-```
-caselaw-repo/
-├── local_app/          # Local search application
-│   ├── caselaw_local/
-│   │   ├── cli.py      # Command-line interface
-│   │   ├── server.py   # FastAPI web server
-│   │   ├── search.py   # Search logic (FTS5)
-│   │   ├── db.py       # Database management
-│   │   ├── static/     # CSS and JavaScript
-│   │   └── templates/  # HTML templates
-│   └── requirements.txt
-│
-└── pipeline/           # Data pipeline (for maintainers)
-    └── ...
-```
-
-### API Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/search` | POST | Full-text search with filters |
-| `/api/doc/{id}` | GET | Get full document by ID |
-| `/api/suggest` | GET | Autocomplete suggestions |
-| `/api/stats` | GET | Database statistics |
-| `/api/export/csv` | POST | Export results to CSV |
-| `/api/cite` | POST | Generate citation |
-| `/api/status` | GET | Database status |
-| `/api/update` | POST | Trigger database update |
-
-### Running in Development
-
-```bash
-cd local_app
-source .venv/bin/activate
-python -m caselaw_local.cli serve --port 8787
-```
-
-The server auto-reloads on code changes.
-
----
-
-## Pipeline (For Data Maintainers)
-
-If you're maintaining the data pipeline (not required for users), see the `pipeline/` directory.
-
-### Architecture
-
-```
-┌─────────────┐     ┌─────────────┐     ┌─────────────┐
-│   Scrapers  │────▶│  Pipeline   │────▶│ HuggingFace │
-│ (swiss-caselaw)   │  (this repo)│     │  (hosting)  │
-└─────────────┘     └─────────────┘     └─────────────┘
-                                               │
-                                               ▼
-                                        ┌─────────────┐
-                                        │ Local App   │
-                                        │ (users)     │
-                                        └─────────────┘
-```
-
-### Publishing Schedule
-- **Daily**: Scrape new decisions, publish delta files
-- **Weekly**: Consolidate into new snapshot, push to HuggingFace
-
-### Setup
-
-1. Create HuggingFace dataset repo
-2. Set GitHub secrets: `HF_TOKEN`, `HF_DATASET_REPO`
-3. Run initial backfill (see pipeline README)
-4. GitHub Actions handles daily/weekly updates
-
----
-
-## License & Legal
-
-This tool provides access to publicly available court decisions. Use responsibly and respect each court's terms of service.
-
-## Contributing
-
-Issues and pull requests welcome at [github.com/jonashertner/caselaw-repo](https://github.com/jonashertner/caselaw-repo).
-
-## Acknowledgments
-
-Data sourced from [entscheidsuche.ch](https://entscheidsuche.ch) and official Swiss court portals.
+MIT. Court decisions are public records.

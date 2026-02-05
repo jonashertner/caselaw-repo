@@ -1,0 +1,44 @@
+name: caselaw-daily-delta
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "15 2 * * *"  # daily 02:15 UTC
+
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      HF_DATASET_REPO: ${{ secrets.HF_DATASET_REPO }}
+      CASELAW_ROLLING_SINCE_DAYS: ${{ vars.CASELAW_ROLLING_SINCE_DAYS }}
+      LOG_LEVEL: INFO
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pipeline deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r pipeline/requirements.txt
+          pip install -e pipeline
+
+      - name: Scrape + export (customize if needed)
+        run: |
+          bash scripts/run_scrapers_and_export.sh
+
+      - name: Build delta
+        run: |
+          DATE="$(date -u +%F)"
+          python -m caselaw_pipeline.cli build-delta --export data/exports/decisions.json.gz --out _build --date "$DATE" --parquet
+
+      - name: Publish delta
+        run: |
+          DATE="$(date -u +%F)"
+          python -m caselaw_pipeline.cli publish-delta --build-dir _build --date "$DATE" --parquet

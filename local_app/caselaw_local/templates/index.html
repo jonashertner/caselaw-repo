@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Swiss Caselaw — Local Search</title>
+  <link rel="stylesheet" href="/static/styles.css"/>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg"/>
+</head>
+<body>
+  <div class="app" id="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"></div>
+        <div class="brand-text">
+          <div class="brand-title">Swiss Caselaw</div>
+          <div class="brand-sub">Local offline search</div>
+        </div>
+      </div>
+
+      <div class="searchbox">
+        <div class="search-row">
+          <input id="q" class="search-input" type="search" autocomplete="off" placeholder="Search (supports FTS syntax: quotes, AND/OR, title:, docket:, etc.)"/>
+          <button id="btnQueryBuilder" class="btn ghost" title="Query Builder">Builder</button>
+        </div>
+        <div class="search-actions">
+          <button id="btnHelp" class="btn ghost" title="Help">Help</button>
+          <a href="/dashboard" class="btn ghost" title="View database statistics">Dashboard</a>
+          <button id="btnSavedSearches" class="btn ghost" title="Saved Searches">Saved</button>
+          <button id="btnUpdate" class="btn ghost" title="Update dataset">Update</button>
+          <button id="btnTheme" class="btn ghost" title="Toggle theme">Theme</button>
+        </div>
+        <div id="suggest" class="suggest hidden"></div>
+        <div id="recentSearches" class="recent-searches hidden"></div>
+      </div>
+    </header>
+
+    <!-- Query Builder Modal -->
+    <div id="queryBuilder" class="query-builder hidden">
+      <div class="qb-header">
+        <span class="qb-title">Query Builder</span>
+        <button id="qbClose" class="btn ghost">×</button>
+      </div>
+      <div class="qb-body">
+        <div class="qb-row">
+          <select class="qb-field">
+            <option value="">Any field</option>
+            <option value="title:">Title</option>
+            <option value="docket:">Docket</option>
+            <option value="content_text:">Content</option>
+          </select>
+          <input type="text" class="qb-term" placeholder="Search term..."/>
+          <button class="btn qb-add" title="Add condition">+</button>
+        </div>
+        <div id="qbConditions" class="qb-conditions"></div>
+        <div class="qb-preview">
+          <label>Preview:</label>
+          <code id="qbPreview"></code>
+        </div>
+        <div class="qb-actions">
+          <button id="qbApply" class="btn">Apply Query</button>
+          <button id="qbClear" class="btn ghost">Clear</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Saved Searches Panel -->
+    <div id="savedSearchesPanel" class="saved-searches-panel hidden">
+      <div class="ss-header">
+        <span class="ss-title">Saved Searches</span>
+        <button id="ssClose" class="btn ghost">×</button>
+      </div>
+      <div id="savedSearchesList" class="ss-list">
+        <div class="muted small">No saved searches yet. Click ★ to save a search.</div>
+      </div>
+    </div>
+
+    <main class="main">
+      <aside class="sidebar">
+        <div class="panel">
+          <div class="panel-title">Filters</div>
+
+          <div class="field">
+            <label>Date range</label>
+            <div class="date-picker-row">
+              <div class="date-input-wrap">
+                <input id="dateFrom" type="date" placeholder="From"/>
+                <button class="date-clear" data-target="dateFrom" title="Clear">×</button>
+              </div>
+              <span class="date-sep">→</span>
+              <div class="date-input-wrap">
+                <input id="dateTo" type="date" placeholder="To"/>
+                <button class="date-clear" data-target="dateTo" title="Clear">×</button>
+              </div>
+            </div>
+            <div class="date-presets">
+              <button class="btn ghost small" data-preset="1y">1 Year</button>
+              <button class="btn ghost small" data-preset="5y">5 Years</button>
+              <button class="btn ghost small" data-preset="10y">10 Years</button>
+              <button class="btn ghost small" data-preset="all">All</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <label>Level</label>
+            <div class="level-toggle">
+              <button id="levelAll" class="btn level-btn active" data-level="">All</button>
+              <button id="levelFederal" class="btn level-btn" data-level="federal">Federal</button>
+              <button id="levelCantonal" class="btn level-btn" data-level="cantonal">Cantonal</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <label>Language</label>
+            <div id="facetLanguage" class="facet"></div>
+          </div>
+
+          <div class="field">
+            <label>Canton</label>
+            <div id="facetCanton" class="facet scroll"></div>
+          </div>
+
+          <div class="field">
+            <label>Court / source</label>
+            <div id="facetSource" class="facet scroll"></div>
+          </div>
+
+          <div class="field">
+            <label>Sort</label>
+            <select id="sort">
+              <option value="relevance">Relevance</option>
+              <option value="date_desc">Newest first</option>
+              <option value="date_asc">Oldest first</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <button id="btnClear" class="btn">Clear filters</button>
+          </div>
+
+          <div class="field">
+            <button id="btnStats" class="btn">Show Stats</button>
+          </div>
+
+          <div id="statsPanel" class="stats-panel hidden">
+            <div id="statsContent" class="stats-content">
+              <div class="muted small">Loading stats...</div>
+            </div>
+          </div>
+
+          <div class="panel-foot">
+            <div id="status" class="muted small"></div>
+          </div>
+        </div>
+      </aside>
+
+      <section class="results">
+        <div class="results-head">
+          <div class="summary-row">
+            <div id="loadingIndicator" class="loading-indicator hidden">
+              <div class="spinner"></div>
+              <span>Searching...</span>
+            </div>
+            <div id="summary" class="summary"></div>
+            <button id="btnSaveSearch" class="btn ghost small" title="Save this search">★</button>
+          </div>
+          <div class="results-actions">
+            <button id="btnExportCSV" class="btn ghost small" title="Export results to CSV">Export CSV</button>
+            <span class="kbd muted small">/ focus · j/k navigate · enter open</span>
+          </div>
+        </div>
+
+        <div id="errorBox" class="error-box hidden"></div>
+        <div id="didYouMean" class="did-you-mean hidden"></div>
+
+        <div id="list" class="list"></div>
+
+        <div class="pager">
+          <button id="prev" class="btn ghost">Prev</button>
+          <div id="pageInfo" class="muted small"></div>
+          <button id="next" class="btn ghost">Next</button>
+        </div>
+      </section>
+
+      <section class="detail" id="detail">
+        <div class="detail-inner">
+          <div class="detail-head">
+            <div id="detailTitle" class="detail-title">Select a result</div>
+            <div class="detail-meta" id="detailMeta"></div>
+            <div class="detail-actions">
+              <a id="detailUrl" class="btn ghost" href="#" target="_blank" rel="noreferrer">Open source</a>
+              <a id="detailPdf" class="btn ghost" href="#" target="_blank" rel="noreferrer">Open PDF</a>
+              <button id="btnCopyCite" class="btn ghost" title="Copy citation">Copy Citation</button>
+              <button id="btnShareLink" class="btn ghost" title="Copy share link">Share</button>
+            </div>
+          </div>
+          <div id="detailBody" class="detail-body muted">
+            Use the search box. Results appear on the left. Open a decision to view full text here.
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <div id="modal" class="modal hidden">
+      <div class="modal-card">
+        <div class="modal-head">
+          <div class="modal-title" id="modalTitle">Help</div>
+          <button class="btn ghost" id="modalClose">Close</button>
+        </div>
+        <div class="modal-body" id="modalBody"></div>
+      </div>
+    </div>
+
+    <div id="toast" class="toast hidden"></div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

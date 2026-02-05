@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "caselaw-pipeline"
+version = "0.1.0"
+description = "Swiss caselaw pipeline: build weekly snapshots + daily deltas"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["caselaw_pipeline*"]

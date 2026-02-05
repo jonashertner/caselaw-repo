@@ -2,37 +2,24 @@
 
 Search Swiss federal and cantonal court decisions locally on your computer. No account needed, no internet required after setup, completely private.
 
-## Installation (No Terminal Required)
+## Requirements
 
-### Requirements
-- macOS or Windows
+- macOS, Linux, or Windows
 - Python 3.10+ ([download here](https://www.python.org/downloads/))
 - 20 GB free disk space
 
-### macOS
+## Quick Start
 
-1. [Download the repository](https://github.com/jonashertner/caselaw-repo/archive/refs/heads/main.zip) and unzip it
-2. Double-click **`install-mac.command`**
-3. Wait for setup to complete (downloads ~15 GB on first run)
-4. A shortcut appears on your Desktop — double-click to launch anytime
+Choose your preferred installation method:
 
-### Windows
+### Option A: One-Click Install (No Terminal)
 
-1. [Download the repository](https://github.com/jonashertner/caselaw-repo/archive/refs/heads/main.zip) and unzip it
-2. Double-click **`install-windows.bat`**
-3. Wait for setup to complete (downloads ~15 GB on first run)
-4. A shortcut appears on your Desktop — double-click to launch anytime
+1. [Download ZIP](https://github.com/jonashertner/caselaw-repo/archive/refs/heads/main.zip) and unzip
+2. Double-click **`install-mac.command`** (Mac) or **`install-windows.bat`** (Windows)
+3. Wait for setup (~15 GB download on first run)
+4. A Desktop shortcut is created — double-click anytime to launch
 
-### After Installation
-
-- Double-click **Swiss Caselaw** on your Desktop
-- Your browser opens automatically to the search interface
-- Works offline after initial setup
-
----
-
-<details>
-<summary><b>Alternative: Command Line Installation</b></summary>
+### Option B: Command Line
 
 ```bash
 # Clone and install
@@ -47,9 +34,7 @@ python -m caselaw_local.cli update
 python -m caselaw_local.cli serve
 ```
 
-Open http://127.0.0.1:8787 in your browser.
-
-</details>
+Open **http://127.0.0.1:8787** in your browser.
 
 ---
 

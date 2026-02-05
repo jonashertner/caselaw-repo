@@ -10,30 +10,20 @@ Search Swiss federal and cantonal court decisions locally on your computer. No a
 
 ## Quick Start
 
-Choose your preferred installation method:
-
-### Option A: One-Click Install (No Terminal)
-
-1. [Download ZIP](https://github.com/jonashertner/caselaw-repo/archive/refs/heads/main.zip) and unzip
-2. **Mac**: Right-click `install-mac.command` → select **Open** → click **Open** in the dialog
-   **Windows**: Double-click `install-windows.bat`
-3. Wait for setup (~15 GB download on first run)
-4. A Desktop shortcut is created — double-click anytime to launch
-
-> **Mac users**: The "Open" dialog appears because the script is not signed. This is normal for downloaded scripts. You only need to do this once.
-
-### Option B: Command Line
-
 ```bash
-# Clone and install
+# 1. Clone the repository
 git clone https://github.com/jonashertner/caselaw-repo.git
 cd caselaw-repo/local_app
+
+# 2. Set up Python environment
 python3 -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt && pip install -e .
 
-# Download database and start
+# 3. Download database (~15 GB, one-time)
 python -m caselaw_local.cli update
+
+# 4. Start the server
 python -m caselaw_local.cli serve
 ```
 

@@ -157,7 +157,7 @@ All decisions are scraped directly from official court portals using dedicated s
 - Bundespatentgericht (BPatGer)
 
 **Cantonal courts:**
-Dedicated scraper for each of the 26 cantons, pulling directly from official cantonal court websites.
+Dedicated scraper for each of the 26 cantons, pulling directly from official cantonal court websites. Checking for gaps against entscheidsuche.ch.
 
 ### Automated Updates
 

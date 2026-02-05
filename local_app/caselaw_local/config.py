@@ -26,8 +26,9 @@ def data_dir() -> Path:
     return Path(os.environ.get("CASELAW_DATA_DIR", str(default_data_dir()))).expanduser().resolve()
 
 
+# Default manifest URL pointing to the public HuggingFace dataset
+DEFAULT_MANIFEST_URL = "https://huggingface.co/datasets/voilaj/swiss-caselaw-artifacts/resolve/main/manifest.json"
+
+
 def manifest_url() -> str:
-    url = os.environ.get("CASELAW_MANIFEST_URL")
-    if not url:
-        raise RuntimeError("Set CASELAW_MANIFEST_URL to the public artifacts/manifest.json URL")
-    return url
+    return os.environ.get("CASELAW_MANIFEST_URL", DEFAULT_MANIFEST_URL)

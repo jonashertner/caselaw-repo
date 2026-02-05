@@ -32,22 +32,22 @@ Add to `~/.claude/settings.json`:
 }
 ```
 
-Restart Claude Code. Then ask in natural language:
+Restart Claude Code. Then ask in natural language — German, French, Italian, or English:
 
 ```
-Search for data protection cases from the Federal Supreme Court
+Finde Entscheide betreffend Verfahrenseinstellung und Beschwerde der Privatklägerschaft
+```
+
+```
+Recherche les arrêts du Tribunal fédéral concernant la protection des données
+```
+
+```
+Trova decisioni del Tribunale federale sulla protezione dei dati
 ```
 
 ```
 Find decisions citing BGE 140 III 264
-```
-
-```
-Show recent criminal law cases from Zurich involving fraud
-```
-
-```
-Finde Entscheide betreffend Verfahrenseinstellung und Beschwerde der Privatklägerschaft
 ```
 
 ### MCP Tools

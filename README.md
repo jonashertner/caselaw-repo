@@ -148,7 +148,7 @@ The database is stored at:
 
 ### Sources
 
-All decisions are scraped from official Swiss court portals:
+All decisions are scraped directly from official court portals using dedicated scrapers:
 
 **Federal courts:**
 - Bundesgericht (BGer)
@@ -157,7 +157,7 @@ All decisions are scraped from official Swiss court portals:
 - Bundespatentgericht (BPatGer)
 
 **Cantonal courts:**
-All 26 cantons — sourced via [entscheidsuche.ch](https://entscheidsuche.ch), which aggregates cantonal court publications.
+Dedicated scraper for each of the 26 cantons, pulling directly from official cantonal court websites.
 
 ### Automated Updates
 

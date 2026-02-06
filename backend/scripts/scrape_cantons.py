@@ -712,6 +712,8 @@ def scrape_be_sitemap(limit: int | None = None, from_date: date | None = None, t
     imported = 0
     skipped = 0
 
+    max_urls = 500 if min_year else 10000
+
     with get_session() as session:
         for sitemap_url, court_type in sitemaps:
             print(f"  Fetching {court_type} sitemap...")
@@ -729,7 +731,7 @@ def scrape_be_sitemap(limit: int | None = None, from_date: date | None = None, t
 
             print(f"    Found {len(urls)} URLs in sitemap")
 
-            for url_elem in urls:
+            for url_elem in urls[:max_urls]:
                 url = url_elem.get_text(strip=True)
 
                 # Skip non-decision URLs
@@ -841,6 +843,7 @@ def scrape_sg_crawler(limit: int | None = None, from_date: date | None = None, t
     base_url = "https://www.gerichte.sg.ch"
     start_url = "https://www.gerichte.sg.ch/home/dienstleistungen/rechtsprechung.html"
     min_year = from_date.year if from_date else None
+    max_pages = 200 if from_date else 5000
 
     imported = 0
     skipped = 0
@@ -848,7 +851,7 @@ def scrape_sg_crawler(limit: int | None = None, from_date: date | None = None, t
     to_visit = [start_url]
 
     with get_session() as session:
-        while to_visit and (not limit or imported < limit):
+        while to_visit and (not limit or imported < limit) and len(visited) < max_pages:
             url = to_visit.pop(0)
             if url in visited:
                 continue
@@ -962,6 +965,7 @@ def scrape_lu_crawler(limit: int | None = None, from_date: date | None = None, t
         "https://gerichte.lu.ch/recht_sprechung/Hinterlegungen",
     ]
     min_year = from_date.year if from_date else None
+    max_pages = 200 if from_date else 5000
 
     imported = 0
     skipped = 0
@@ -969,7 +973,7 @@ def scrape_lu_crawler(limit: int | None = None, from_date: date | None = None, t
     to_visit = list(start_urls)
 
     with get_session() as session:
-        while to_visit and (not limit or imported < limit):
+        while to_visit and (not limit or imported < limit) and len(visited) < max_pages:
             url = to_visit.pop(0)
             if url in visited:
                 continue
@@ -999,7 +1003,8 @@ def scrape_lu_crawler(limit: int | None = None, from_date: date | None = None, t
 
                     stable_id = stable_uuid_url(f"lu:{full_url}")
 
-                    existing = session.get(Decision, stable_id)
+                    with session.no_autoflush:
+                        existing = session.get(Decision, stable_id)
                     if existing:
                         skipped += 1
                         continue
@@ -1073,6 +1078,7 @@ def scrape_sh_crawler(limit: int | None = None, from_date: date | None = None, t
 
     base_url = "https://obergerichtsentscheide.sh.ch"
     min_year = from_date.year if from_date else None
+    max_pages = 200 if from_date else 5000
 
     imported = 0
     skipped = 0
@@ -1080,7 +1086,7 @@ def scrape_sh_crawler(limit: int | None = None, from_date: date | None = None, t
     to_visit = [base_url]
 
     with get_session() as session:
-        while to_visit and (not limit or imported < limit):
+        while to_visit and (not limit or imported < limit) and len(visited) < max_pages:
             url = to_visit.pop(0)
             if url in visited:
                 continue
@@ -1184,6 +1190,7 @@ def scrape_sz_crawler(limit: int | None = None, from_date: date | None = None, t
     base_url = "https://www.kgsz.ch"
     start_url = "https://www.kgsz.ch/rechtsprechung/"
     min_year = from_date.year if from_date else None
+    max_pages = 200 if from_date else 5000
 
     imported = 0
     skipped = 0
@@ -1191,7 +1198,7 @@ def scrape_sz_crawler(limit: int | None = None, from_date: date | None = None, t
     to_visit = [start_url]
 
     with get_session() as session:
-        while to_visit and (not limit or imported < limit):
+        while to_visit and (not limit or imported < limit) and len(visited) < max_pages:
             url = to_visit.pop(0)
             if url in visited:
                 continue
@@ -1217,7 +1224,8 @@ def scrape_sz_crawler(limit: int | None = None, from_date: date | None = None, t
 
                     stable_id = stable_uuid_url(f"sz:{full_url}")
 
-                    existing = session.get(Decision, stable_id)
+                    with session.no_autoflush:
+                        existing = session.get(Decision, stable_id)
                     if existing:
                         skipped += 1
                         continue
@@ -1292,6 +1300,7 @@ def scrape_vs_crawler(limit: int | None = None, from_date: date | None = None, t
     base_url = "https://apps.vs.ch"
     start_url = "https://apps.vs.ch/le/"
     min_year = from_date.year if from_date else None
+    max_pages = 200 if from_date else 5000
 
     imported = 0
     skipped = 0
@@ -1299,7 +1308,7 @@ def scrape_vs_crawler(limit: int | None = None, from_date: date | None = None, t
     to_visit = [start_url]
 
     with get_session() as session:
-        while to_visit and (not limit or imported < limit):
+        while to_visit and (not limit or imported < limit) and len(visited) < max_pages:
             url = to_visit.pop(0)
             if url in visited:
                 continue
@@ -1570,6 +1579,7 @@ def scrape_ag_crawler(limit: int | None = None, from_date: date | None = None, t
     base_url = "https://www.ag.ch"
     start_url = "https://www.ag.ch/de/themen/recht-justiz/gesetze-entscheide/agve"
     min_year = from_date.year if from_date else None
+    max_pages = 200 if from_date else 5000
 
     imported = 0
     skipped = 0
@@ -1577,7 +1587,7 @@ def scrape_ag_crawler(limit: int | None = None, from_date: date | None = None, t
     to_visit = [start_url]
 
     with get_session() as session:
-        while to_visit and (not limit or imported < limit):
+        while to_visit and (not limit or imported < limit) and len(visited) < max_pages:
             url = to_visit.pop(0)
             if url in visited:
                 continue
@@ -1603,7 +1613,8 @@ def scrape_ag_crawler(limit: int | None = None, from_date: date | None = None, t
 
                     stable_id = stable_uuid_url(f"ag:{full_url}")
 
-                    existing = session.get(Decision, stable_id)
+                    with session.no_autoflush:
+                        existing = session.get(Decision, stable_id)
                     if existing:
                         skipped += 1
                         continue
@@ -1678,6 +1689,7 @@ def scrape_bl_crawler(limit: int | None = None, from_date: date | None = None, t
     base_url = "https://www.baselland.ch"
     start_url = "https://www.baselland.ch/politik-und-behorden/gerichte/rechtsprechung"
     min_year = from_date.year if from_date else None
+    max_pages = 200 if from_date else 5000
 
     imported = 0
     skipped = 0
@@ -1685,7 +1697,7 @@ def scrape_bl_crawler(limit: int | None = None, from_date: date | None = None, t
     to_visit = [start_url]
 
     with get_session() as session:
-        while to_visit and (not limit or imported < limit):
+        while to_visit and (not limit or imported < limit) and len(visited) < max_pages:
             url = to_visit.pop(0)
             if url in visited:
                 continue
@@ -2243,13 +2255,14 @@ def scrape_ju_crawler(limit: int | None = None, from_date: date | None = None, t
         "https://www.jura.ch/JUST/Instances-judiciaires/Tribunal-cantonal/Revue-jurassienne-de-jurisprudence.html",
     ]
     min_year = from_date.year if from_date else None
+    max_pages = 200 if from_date else 5000
 
     stats = ScraperStats()
     visited = set()
     to_visit = list(start_urls)
 
     with get_session() as session:
-        while to_visit and (not limit or stats.imported < limit):
+        while to_visit and (not limit or stats.imported < limit) and len(visited) < max_pages:
             url = to_visit.pop(0)
             if url in visited:
                 continue
@@ -2702,13 +2715,14 @@ def scrape_zg_crawler(limit: int | None = None, from_date: date | None = None, t
         "https://zg.ch/de/recht-justiz/einsicht-entscheide-und-urteile/gerichtspraxis-des-obergerichts-des-kantons-zug",
     ]
     min_year = from_date.year if from_date else None
+    max_pages = 200 if from_date else 5000
 
     stats = ScraperStats()
     visited = set()
     to_visit = list(start_urls)
 
     with get_session() as session:
-        while to_visit and (not limit or stats.imported < limit):
+        while to_visit and (not limit or stats.imported < limit) and len(visited) < max_pages:
             url = to_visit.pop(0)
             if url in visited:
                 continue
@@ -2738,7 +2752,8 @@ def scrape_zg_crawler(limit: int | None = None, from_date: date | None = None, t
 
                     stable_id = stable_uuid_url(f"zg:{full_url}")
 
-                    existing = session.get(Decision, stable_id)
+                    with session.no_autoflush:
+                        existing = session.get(Decision, stable_id)
                     if existing:
                         stats.add_skipped()
                         continue
@@ -3188,7 +3203,7 @@ def scrape_ow_entscheidsuche(
 # TICINO (TI) - Direct Scraper (Italian)
 # =============================================================================
 
-def scrape_ti_findinfoweb(limit: int | None = None) -> int:
+def scrape_ti_findinfoweb(limit: int | None = None, from_date: date | None = None, to_date: date | None = None) -> int:
     """Scrape decisions from Ticino via FindInfoWeb (sentenze.ti.ch).
 
     Ticino uses FindInfoWeb like SO/BS but with Italian interface.
@@ -3197,6 +3212,7 @@ def scrape_ti_findinfoweb(limit: int | None = None) -> int:
 
     base_url = "https://www.sentenze.ti.ch/cgi-bin/nph-omniscgi"
     stats = ScraperStats()
+    min_year = from_date.year if from_date else None
     page = 1
 
     with get_session() as session:
@@ -3317,6 +3333,16 @@ def scrape_ti_findinfoweb(limit: int | None = None) -> int:
                 if date_match:
                     decision_date = parse_date_flexible(date_match.group(1))
 
+                # Date filter: skip old decisions
+                if from_date and decision_date and decision_date < from_date:
+                    stats.add_skipped()
+                    continue
+                if min_year and case_number:
+                    yr_match = re.search(r'(20[012]\d)', case_number)
+                    if yr_match and int(yr_match.group(1)) < min_year:
+                        stats.add_skipped()
+                        continue
+
                 # Extract court/authority
                 court = "Tribunale cantonale"
                 auth_match = re.search(r"Autorit[àa]:\s*(\w+)", detail_resp.text)
@@ -3368,16 +3394,16 @@ def scrape_ti_findinfoweb(limit: int | None = None) -> int:
 
 
 # Keep old function name as alias for backwards compatibility
-def scrape_ti_crawler(limit: int | None = None) -> int:
+def scrape_ti_crawler(limit: int | None = None, from_date: date | None = None, to_date: date | None = None) -> int:
     """Alias for scrape_ti_findinfoweb."""
-    return scrape_ti_findinfoweb(limit)
+    return scrape_ti_findinfoweb(limit, from_date=from_date, to_date=to_date)
 
 
 # =============================================================================
 # VAUD (VD) - Direct Scraper (French)
 # =============================================================================
 
-def scrape_vd_findinfoweb(limit: int | None = None) -> int:
+def scrape_vd_findinfoweb(limit: int | None = None, from_date: date | None = None, to_date: date | None = None) -> int:
     """Scrape administrative law decisions from Vaud via FindInfoWeb.
 
     Vaud uses FindInfoWeb for administrative law (CDAP) at jurisprudence.vd.ch.
@@ -3388,9 +3414,12 @@ def scrape_vd_findinfoweb(limit: int | None = None) -> int:
 
     base_url = "https://jurisprudence.vd.ch/scripts/nph-omniscgi.exe"
     stats = ScraperStats()
+    min_year = from_date.year if from_date else None
 
     # Search by year to get all decisions
     years = list(range(2026, 1983, -1))  # From 2026 back to 1984
+    if min_year:
+        years = [y for y in years if y >= min_year]
 
     with get_session() as session:
         for year in years:
@@ -3527,6 +3556,10 @@ def scrape_vd_findinfoweb(limit: int | None = None) -> int:
                     if date_match:
                         decision_date = parse_date_flexible(date_match.group(1))
 
+                    if from_date and decision_date and decision_date < from_date:
+                        stats.add_skipped()
+                        continue
+
                     decision_url = detail_url
 
                     try:
@@ -3569,9 +3602,9 @@ def scrape_vd_findinfoweb(limit: int | None = None) -> int:
 
 
 # Keep old function name as alias
-def scrape_vd_crawler(limit: int | None = None) -> int:
+def scrape_vd_crawler(limit: int | None = None, from_date: date | None = None, to_date: date | None = None) -> int:
     """Alias for scrape_vd_findinfoweb."""
-    return scrape_vd_findinfoweb(limit)
+    return scrape_vd_findinfoweb(limit, from_date=from_date, to_date=to_date)
 
 
 # =============================================================================
@@ -3599,6 +3632,7 @@ def scrape_ge_crawler(limit: int | None = None, from_date: date | None = None, t
     # Geneva uses a modern web app - we need to target the PDF archive URLs directly
     # The decisions are organized by court and year
     min_year = from_date.year if from_date else None
+    max_pages = 200 if from_date else 5000
     stats = ScraperStats()
     visited = set()
 
@@ -3611,7 +3645,7 @@ def scrape_ge_crawler(limit: int | None = None, from_date: date | None = None, t
     to_visit = list(start_urls)
 
     with get_session() as session:
-        while to_visit and (not limit or stats.imported < limit):
+        while to_visit and (not limit or stats.imported < limit) and len(visited) < max_pages:
             url = to_visit.pop(0)
             if url in visited:
                 continue
@@ -3644,7 +3678,8 @@ def scrape_ge_crawler(limit: int | None = None, from_date: date | None = None, t
 
                     stable_id = stable_uuid_url(f"ge:{full_url}")
 
-                    existing = session.get(Decision, stable_id)
+                    with session.no_autoflush:
+                        existing = session.get(Decision, stable_id)
                     if existing:
                         stats.add_skipped()
                         continue

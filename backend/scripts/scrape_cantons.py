@@ -446,22 +446,28 @@ def scrape_bs_findinfoweb(
 # APPENZELL INNERRHODEN (AI) - PDF Archives
 # =============================================================================
 
-def scrape_ai_pdfs(limit: int | None = None) -> int:
+def scrape_ai_pdfs(
+    limit: int | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+) -> int:
     """Scrape decisions from Appenzell Innerrhoden PDF archives."""
     print("Scraping Appenzell Innerrhoden (ai.ch)...")
 
     base_url = "https://www.ai.ch"
+    min_year = from_date.year if from_date else 1995
 
     # Known PDF URLs for different years
     pdf_urls = []
 
     # Recent years (2021+) - separate court decisions
-    for year in range(2024, 2020, -1):
+    for year in range(2024, max(2020, min_year - 1), -1):
         pdf_urls.append(f"{base_url}/gerichte/gerichtsentscheide/gerichtsentscheide/gerichtsentscheide-{year}.pdf/download")
 
-    # Older years (1995-2020) - combined admin + court decisions
-    for year in range(2020, 1994, -1):
-        pdf_urls.append(f"{base_url}/themen/staat-und-recht/veroeffentlichungen/verwaltungs-und-gerichtsentscheide/ftw-simplelayout-filelistingblock/verwaltungs-und-gerichtsentscheide-{year}.pdf/download")
+    # Older years - combined admin + court decisions
+    if min_year <= 2020:
+        for year in range(2020, min_year - 1, -1):
+            pdf_urls.append(f"{base_url}/themen/staat-und-recht/veroeffentlichungen/verwaltungs-und-gerichtsentscheide/ftw-simplelayout-filelistingblock/verwaltungs-und-gerichtsentscheide-{year}.pdf/download")
 
     imported = 0
     skipped = 0
@@ -541,11 +547,16 @@ def scrape_ai_pdfs(limit: int | None = None) -> int:
 # THURGAU (TG) - Confluence-based
 # =============================================================================
 
-def scrape_tg_confluence(limit: int | None = None) -> int:
+def scrape_tg_confluence(
+    limit: int | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+) -> int:
     """Scrape decisions from Thurgau Confluence portal."""
     print("Scraping Thurgau (rechtsprechung.tg.ch)...")
 
     base_url = "https://rechtsprechung.tg.ch"
+    min_year = from_date.year if from_date else None
 
     imported = 0
     skipped = 0
@@ -566,6 +577,10 @@ def scrape_tg_confluence(limit: int | None = None) -> int:
         for link in soup.find_all("a", href=True):
             href = link.get("href", "")
             if "rbog-" in href.lower():
+                # Skip years older than from_date
+                m = re.search(r"rbog-(\d{4})", href, re.I)
+                if min_year and m and int(m.group(1)) < min_year:
+                    continue
                 year_links.append(urljoin(base_url, href))
 
         print(f"  Found {len(year_links)} year collections")
@@ -1805,7 +1820,11 @@ def scrape_fr_crawler(
 # URI (UR) - Direct JSON/HTML Scraper
 # =============================================================================
 
-def scrape_ur_crawler(limit: int | None = None) -> int:
+def scrape_ur_crawler(
+    limit: int | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+) -> int:
     """Scrape decisions from Uri court website (ur.ch/rechtsprechung).
 
     Uri uses a JSON data structure embedded in the page's data-entities attribute.
@@ -1864,6 +1883,12 @@ def scrape_ur_crawler(limit: int | None = None) -> int:
         for doc in doc_ids:
             if limit and stats.imported >= limit:
                 break
+
+            # Skip documents older than from_date
+            if from_date and doc["date"]:
+                doc_date = parse_date_flexible(doc["date"])
+                if doc_date and doc_date < from_date:
+                    continue
 
             doc_url = urljoin(base_url, doc["url"])
             stable_id = stable_uuid_url(f"ur:{doc_url}")
@@ -2219,7 +2244,11 @@ def scrape_ju_crawler(limit: int | None = None) -> int:
 # GLARUS (GL) - via entscheidsuche.ch API
 # =============================================================================
 
-def scrape_gl_entscheidsuche(limit: int | None = None) -> int:
+def scrape_gl_entscheidsuche(
+    limit: int | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+) -> int:
     """Scrape decisions from Glarus via entscheidsuche.ch API.
 
     GL blocks direct access to gl.ch, so we use entscheidsuche.ch which
@@ -2241,9 +2270,13 @@ def scrape_gl_entscheidsuche(limit: int | None = None) -> int:
 
             rate_limiter.wait()
 
-            # Query for GL decisions
+            # Build query with optional date range filter
+            must_clauses: list[dict] = [{"term": {"canton": "GL"}}]
+            if from_date:
+                must_clauses.append({"range": {"date": {"gte": from_date.isoformat()}}})
+
             query = {
-                "query": {"term": {"canton": "GL"}},
+                "query": {"bool": {"must": must_clauses}} if len(must_clauses) > 1 else {"term": {"canton": "GL"}},
                 "size": batch_size,
                 "sort": [{"date": "desc"}, {"_id": "asc"}],
                 "_source": ["id", "date", "canton", "title", "abstract", "attachment", "hierarchy", "reference"]
@@ -2392,7 +2425,11 @@ def scrape_gl_entscheidsuche(limit: int | None = None) -> int:
 # NIDWALDEN (NW) - Direct HTML Crawler
 # =============================================================================
 
-def scrape_nw_dataentities(limit: int | None = None) -> int:
+def scrape_nw_dataentities(
+    limit: int | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+) -> int:
     """Scrape decisions from Nidwalden via data-entities JSON.
 
     NW embeds all decisions as JSON in a data-entities attribute on the
@@ -2440,6 +2477,12 @@ def scrape_nw_dataentities(limit: int | None = None) -> int:
             name = entry.get("name", "")
             datum = entry.get("datum", "")
             download_html = entry.get("_downloadBtn", "")
+
+            # Skip entries older than from_date
+            if from_date and datum:
+                entry_date = parse_date_flexible(datum)
+                if entry_date and entry_date < from_date:
+                    continue
 
             # Extract href from download button HTML
             href_match = re.search(r'href="([^"]+)"', download_html)
@@ -2663,17 +2706,25 @@ def scrape_zg_crawler(limit: int | None = None) -> int:
 # GRAUBÜNDEN (GR) - via entscheidsuche.ch (static files)
 # =============================================================================
 
-def scrape_gr_entscheidsuche(limit: int | None = None) -> int:
+def scrape_gr_entscheidsuche(
+    limit: int | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+) -> int:
     """Scrape decisions from Graubünden via entscheidsuche.ch.
 
     entscheidsuche.ch provides direct access to ~18,945 GR decisions
     via static files (PDF + JSON metadata), bypassing the complex
     Tribuna GWT application.
+
+    Filenames contain ISO dates (e.g. GR_KG_006_ZK1-2019-48_2022-12-02.json).
+    When from_date is set, files with dates before it are skipped.
     """
     print("Scraping Graubünden (via entscheidsuche.ch)...")
 
     index_url = "https://entscheidsuche.ch/docs/GR_Gerichte/"
     stats = ScraperStats()
+    _date_in_filename = re.compile(r"(\d{4}-\d{2}-\d{2})\.json$")
 
     with get_session() as session:
         # Get directory listing
@@ -2690,6 +2741,16 @@ def scrape_gr_entscheidsuche(limit: int | None = None) -> int:
         for link in soup.find_all("a", href=True):
             href = link.get("href", "")
             if href.endswith(".json"):
+                # Skip files with dates before from_date
+                if from_date:
+                    m = _date_in_filename.search(href)
+                    if m:
+                        try:
+                            file_date = date.fromisoformat(m.group(1))
+                            if file_date < from_date:
+                                continue
+                        except ValueError:
+                            pass
                 json_links.append(href)
 
         print(f"  Found {len(json_links)} decision metadata files")
@@ -2827,7 +2888,11 @@ def scrape_gr_entscheidsuche(limit: int | None = None) -> int:
 # OBWALDEN (OW) - via entscheidsuche.ch (static files)
 # =============================================================================
 
-def scrape_ow_entscheidsuche(limit: int | None = None) -> int:
+def scrape_ow_entscheidsuche(
+    limit: int | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+) -> int:
     """Scrape decisions from Obwalden via entscheidsuche.ch.
 
     rechtsprechung.ow.ch uses Vaadin which requires complex UIDL protocol.
@@ -2837,6 +2902,7 @@ def scrape_ow_entscheidsuche(limit: int | None = None) -> int:
 
     index_url = "https://entscheidsuche.ch/docs/OW_Gerichte/"
     stats = ScraperStats()
+    _date_in_filename = re.compile(r"(\d{4}-\d{2}-\d{2})\.json$")
 
     with get_session() as session:
         # Get directory listing
@@ -2853,6 +2919,16 @@ def scrape_ow_entscheidsuche(limit: int | None = None) -> int:
         for link in soup.find_all("a", href=True):
             href = link.get("href", "")
             if href.endswith(".json"):
+                # Skip files with dates before from_date
+                if from_date:
+                    m = _date_in_filename.search(href)
+                    if m:
+                        try:
+                            file_date = date.fromisoformat(m.group(1))
+                            if file_date < from_date:
+                                continue
+                        except ValueError:
+                            pass
                 json_links.append(href)
 
         print(f"  Found {len(json_links)} decision metadata files")
@@ -3538,8 +3614,8 @@ SCRAPERS = {
     # Sitemap-based
     "BE": ("Bern", scrape_be_sitemap, False),
     # Custom/Special
-    "AI": ("Appenzell Innerrhoden", scrape_ai_pdfs, False),  # Year-based archive
-    "TG": ("Thurgau", scrape_tg_confluence, False),  # Confluence portal
+    "AI": ("Appenzell Innerrhoden", scrape_ai_pdfs, True),  # Year-based archive
+    "TG": ("Thurgau", scrape_tg_confluence, True),  # Confluence portal
     # HTML Crawlers - German-speaking
     "SG": ("St. Gallen", scrape_sg_crawler, False),
     "LU": ("Luzern", scrape_lu_crawler, False),
@@ -3547,15 +3623,15 @@ SCRAPERS = {
     "SZ": ("Schwyz", scrape_sz_crawler, False),
     "AG": ("Aargau", scrape_ag_crawler, False),
     "BL": ("Basel-Landschaft", scrape_bl_crawler, False),
-    "UR": ("Uri", scrape_ur_crawler, False),  # Direct: ur.ch/rechtsprechung
-    "NW": ("Nidwalden", scrape_nw_dataentities, False),  # JSON data-entities: nw.ch/rechtsprechung
+    "UR": ("Uri", scrape_ur_crawler, True),  # Direct: ur.ch/rechtsprechung
+    "NW": ("Nidwalden", scrape_nw_dataentities, True),  # JSON data-entities: nw.ch/rechtsprechung
     "ZG": ("Zug", scrape_zg_crawler, False),  # Direct: zg.ch/recht-justiz
     # LEv4 API (Weblaw platform)
     "AR": ("Appenzell AR", scrape_ar_lev4, False),  # LEv4 API: rechtsprechung.ar.ch
     # Via entscheidsuche.ch (official portals use complex JS or block access)
-    "GL": ("Glarus", scrape_gl_entscheidsuche, False),  # entscheidsuche.ch API (~70 docs)
-    "GR": ("Graubünden", scrape_gr_entscheidsuche, False),  # entscheidsuche.ch (~18,945 docs)
-    "OW": ("Obwalden", scrape_ow_entscheidsuche, False),  # entscheidsuche.ch (~2,201 docs)
+    "GL": ("Glarus", scrape_gl_entscheidsuche, True),  # entscheidsuche.ch API (~70 docs)
+    "GR": ("Graubünden", scrape_gr_entscheidsuche, True),  # entscheidsuche.ch (~18,945 docs)
+    "OW": ("Obwalden", scrape_ow_entscheidsuche, True),  # entscheidsuche.ch (~2,201 docs)
     # HTML Crawlers - French-speaking
     "FR": ("Fribourg", scrape_fr_crawler, True),
     "JU": ("Jura", scrape_ju_crawler, False),  # Direct: jura.ch/JUST
@@ -3588,6 +3664,7 @@ def scrape_all_cantons(
     from_date: date | None = None,
     to_date: date | None = None,
     historical: bool = False,
+    per_scraper_timeout: int = 900,
 ) -> int:
     """Run all cantonal scrapers.
 
@@ -3599,16 +3676,21 @@ def scrape_all_cantons(
             Ignored if historical=True.
         historical: If True, fetch ALL decisions without date restrictions.
             This enables complete archive capture for initial database population.
+        per_scraper_timeout: Max seconds per scraper (default 900 = 15 min).
+            Set to 0 to disable. Ignored in historical mode.
 
     Returns:
         Total number of decisions imported
     """
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+
     total = 0
     results = {}
 
-    # In historical mode, disable date filtering
+    # In historical mode, disable date filtering and timeouts
     effective_from_date = None if historical else from_date
     effective_to_date = None if historical else to_date
+    timeout = 0 if historical else per_scraper_timeout
 
     if historical:
         print("Historical mode: Fetching complete archives without date restrictions")
@@ -3618,18 +3700,29 @@ def scrape_all_cantons(
         print(f"Running {name} ({code}) scraper")
         if historical:
             print("  [HISTORICAL MODE - No date filtering]")
+        if timeout and not supports_date:
+            print(f"  [Timeout: {timeout}s]")
         print("="*60)
 
         try:
             if supports_date:
-                count = scraper_func(
-                    limit=limit,
-                    from_date=effective_from_date,
-                    to_date=effective_to_date,
-                )
+                kwargs = dict(limit=limit, from_date=effective_from_date, to_date=effective_to_date)
             else:
-                # Scrapers without date support always fetch everything
-                count = scraper_func(limit=limit)
+                kwargs = dict(limit=limit)
+
+            # Apply timeout to scrapers without date support (they may crawl forever)
+            if timeout and not supports_date:
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(scraper_func, **kwargs)
+                    try:
+                        count = future.result(timeout=timeout)
+                    except FuturesTimeoutError:
+                        print(f"  TIMEOUT after {timeout}s — moving to next scraper")
+                        results[code] = {"status": "timeout", "count": 0}
+                        continue
+            else:
+                count = scraper_func(**kwargs)
+
             results[code] = {"status": "success", "count": count}
             total += count
         except Exception as e:
@@ -3641,8 +3734,11 @@ def scrape_all_cantons(
     print("="*60)
     for code, result in results.items():
         name = SCRAPERS[code][0]
-        if result["status"] == "success":
+        status = result["status"]
+        if status == "success":
             print(f"  {code} ({name}): {result['count']} imported")
+        elif status == "timeout":
+            print(f"  {code} ({name}): TIMEOUT")
         else:
             print(f"  {code} ({name}): ERROR - {result['error']}")
     print(f"\nTotal imported: {total}")

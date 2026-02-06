@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: |
+            pipeline/requirements.txt
+            local_app/requirements.txt
+            mcp_server/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r pipeline/requirements.txt
+          pip install -r local_app/requirements.txt
+          pip install -r mcp_server/requirements.txt
+          pip install -r backend/requirements-dev.txt
+          pip install -e pipeline -e local_app
+
+      - name: Run tests
+        run: pytest tests/ -q
+
+      - name: Lint
+        # TODO: fix pre-existing lint issues, then remove continue-on-error
+        continue-on-error: true
+        run: ruff check backend/ pipeline/ local_app/ mcp_server/

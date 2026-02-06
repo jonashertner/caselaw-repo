@@ -1677,17 +1677,36 @@ def scrape_bl_crawler(limit: int | None = None) -> int:
 # FRIBOURG (FR) - Tribuna Portal
 # =============================================================================
 
-def scrape_fr_crawler(limit: int | None = None) -> int:
-    """Scrape decisions from Fribourg Tribuna portal."""
+def scrape_fr_crawler(
+    limit: int | None = None,
+    from_date: date | None = None,
+    to_date: date | None = None,
+) -> int:
+    """Scrape decisions from Fribourg Tribuna portal.
+
+    The fr.ch portal organizes decisions by year in the URL path, e.g.
+    ``/arrets-de-la-section-civile-du-tribunal-cantonal-2024``.
+    When *from_date* is set we only follow links whose year >= from_date.year
+    so that daily incremental runs don't crawl the entire 20-year archive.
+    """
     print("Scraping Fribourg (fr.ch)...")
 
     base_url = "https://www.fr.ch"
     start_url = "https://www.fr.ch/de/staat-und-recht/justiz/suchmaschine-tribuna-publikation"
 
+    # Year cutoff: skip pages for years older than from_date
+    min_year = from_date.year if from_date else None
+    if min_year:
+        print(f"  Limiting to pages from year >= {min_year}")
+
     imported = 0
     skipped = 0
     visited = set()
     to_visit = [start_url]
+
+    # Pattern to extract a trailing year from fr.ch URLs like
+    # /arrets-de-la-section-civile-du-tribunal-cantonal-2024
+    _year_in_url = re.compile(r"-(\d{4})(?:#.*)?$")
 
     with get_session() as session:
         while to_visit and (not limit or imported < limit):
@@ -1766,6 +1785,11 @@ def scrape_fr_crawler(limit: int | None = None) -> int:
                         skipped += 1
 
                 elif ("tribuna" in href.lower() or "justiz" in href.lower()) and full_url not in visited and full_url.startswith(base_url):
+                    # Skip year pages older than from_date
+                    if min_year:
+                        m = _year_in_url.search(full_url)
+                        if m and int(m.group(1)) < min_year:
+                            continue
                     to_visit.append(full_url)
 
             time.sleep(0.5)
@@ -3533,7 +3557,7 @@ SCRAPERS = {
     "GR": ("Graubünden", scrape_gr_entscheidsuche, False),  # entscheidsuche.ch (~18,945 docs)
     "OW": ("Obwalden", scrape_ow_entscheidsuche, False),  # entscheidsuche.ch (~2,201 docs)
     # HTML Crawlers - French-speaking
-    "FR": ("Fribourg", scrape_fr_crawler, False),
+    "FR": ("Fribourg", scrape_fr_crawler, True),
     "JU": ("Jura", scrape_ju_crawler, False),  # Direct: jura.ch/JUST
     "VD": ("Vaud", scrape_vd_findinfoweb, True),  # FindInfoWeb: jurisprudence.vd.ch
     "GE": ("Genève", scrape_ge_crawler, False),  # Direct: justice.ge.ch

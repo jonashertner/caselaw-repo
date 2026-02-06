@@ -172,6 +172,7 @@ jobs:
       - name: Upload export to HuggingFace
         if: ${{ env.HF_TOKEN != '' && github.event.inputs.skip_hf_push != 'true' }}
         run: |
+          pip install -q huggingface_hub
           huggingface-cli upload voilaj/swiss-caselaw data/exports/decisions.json.gz decisions.json.gz --repo-type dataset --token "$HF_TOKEN"
 
       # ── Pipeline steps (formerly dispatched to caselaw-repo) ─────────

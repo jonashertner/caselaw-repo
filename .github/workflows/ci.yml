@@ -31,6 +31,8 @@ jobs:
           pip install -e pipeline -e local_app
 
       - name: Run tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: pytest tests/ -q
 
       - name: Lint

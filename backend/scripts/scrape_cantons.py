@@ -52,6 +52,12 @@ from scripts.scrape_zh_courts import scrape_zh_courts
 rate_limiter = RateLimiter(requests_per_second=2.0)
 
 
+def _url_year(url: str) -> int | None:
+    """Extract a 4-digit year (2000-2029) from a URL path or filename."""
+    m = re.search(r'[/_-](20[012]\d)(?:[/_.\-#?]|$)', url)
+    return int(m.group(1)) if m else None
+
+
 @retry(max_attempts=3, backoff_base=2.0)
 def fetch_page(url: str, timeout: int = 60) -> httpx.Response:
     """Fetch a page with retry logic."""
@@ -692,9 +698,11 @@ def scrape_tg_confluence(
 # BERN (BE) - Sitemap-based (ZSG + VG)
 # =============================================================================
 
-def scrape_be_sitemap(limit: int | None = None) -> int:
+def scrape_be_sitemap(limit: int | None = None, from_date: date | None = None, to_date: date | None = None) -> int:
     """Scrape decisions from Bern via sitemap discovery."""
     print("Scraping Bern (apps.be.ch)...")
+
+    min_year = from_date.year if from_date else None
 
     sitemaps = [
         ("https://www.zsg-entscheide.apps.be.ch/tribunapublikation/sitemap.xml", "ZSG"),
@@ -727,6 +735,20 @@ def scrape_be_sitemap(limit: int | None = None) -> int:
                 # Skip non-decision URLs
                 if "/decision/" not in url.lower() and "/entscheid/" not in url.lower():
                     continue
+
+                # Date filter: skip entries from years before from_date
+                if min_year:
+                    parent = url_elem.parent
+                    lastmod = parent.find("lastmod") if parent else None
+                    if lastmod:
+                        try:
+                            if int(lastmod.get_text(strip=True)[:4]) < min_year:
+                                continue
+                        except (ValueError, IndexError):
+                            pass
+                    yr = _url_year(url)
+                    if yr and yr < min_year:
+                        continue
 
                 stable_id = stable_uuid_url(f"be:{url}")
 
@@ -812,12 +834,13 @@ def scrape_be_sitemap(limit: int | None = None) -> int:
 # ST. GALLEN (SG) - HTML Crawler
 # =============================================================================
 
-def scrape_sg_crawler(limit: int | None = None) -> int:
+def scrape_sg_crawler(limit: int | None = None, from_date: date | None = None, to_date: date | None = None) -> int:
     """Scrape decisions from St. Gallen court website."""
     print("Scraping St. Gallen (gerichte.sg.ch)...")
 
     base_url = "https://www.gerichte.sg.ch"
     start_url = "https://www.gerichte.sg.ch/home/dienstleistungen/rechtsprechung.html"
+    min_year = from_date.year if from_date else None
 
     imported = 0
     skipped = 0
@@ -853,6 +876,11 @@ def scrape_sg_crawler(limit: int | None = None) -> int:
 
                 # Check if this is a decision page (PDF or HTML)
                 if ".pdf" in href.lower():
+                    if min_year:
+                        yr = _url_year(full_url)
+                        if yr and yr < min_year:
+                            continue
+
                     stable_id = stable_uuid_url(f"sg:{full_url}")
 
                     existing = session.get(Decision, stable_id)
@@ -908,7 +936,8 @@ def scrape_sg_crawler(limit: int | None = None) -> int:
                         skipped += 1
 
                 elif "rechtsprechung" in href.lower() and full_url not in visited:
-                    to_visit.append(full_url)
+                    if not min_year or not _url_year(full_url) or _url_year(full_url) >= min_year:
+                        to_visit.append(full_url)
 
             time.sleep(0.5)
 
@@ -923,7 +952,7 @@ def scrape_sg_crawler(limit: int | None = None) -> int:
 # LUZERN (LU) - HTML Crawler (LGVE)
 # =============================================================================
 
-def scrape_lu_crawler(limit: int | None = None) -> int:
+def scrape_lu_crawler(limit: int | None = None, from_date: date | None = None, to_date: date | None = None) -> int:
     """Scrape decisions from Luzern LGVE."""
     print("Scraping Luzern (gerichte.lu.ch)...")
 
@@ -932,6 +961,7 @@ def scrape_lu_crawler(limit: int | None = None) -> int:
         "https://gerichte.lu.ch/recht_sprechung/lgve",
         "https://gerichte.lu.ch/recht_sprechung/Hinterlegungen",
     ]
+    min_year = from_date.year if from_date else None
 
     imported = 0
     skipped = 0
@@ -962,6 +992,11 @@ def scrape_lu_crawler(limit: int | None = None) -> int:
 
                 # Check for PDF decisions
                 if ".pdf" in href.lower():
+                    if min_year:
+                        yr = _url_year(full_url)
+                        if yr and yr < min_year:
+                            continue
+
                     stable_id = stable_uuid_url(f"lu:{full_url}")
 
                     existing = session.get(Decision, stable_id)
@@ -1016,7 +1051,8 @@ def scrape_lu_crawler(limit: int | None = None) -> int:
                         skipped += 1
 
                 elif ("lgve" in href.lower() or "recht_sprechung" in href.lower()) and full_url not in visited:
-                    to_visit.append(full_url)
+                    if not min_year or not _url_year(full_url) or _url_year(full_url) >= min_year:
+                        to_visit.append(full_url)
 
             time.sleep(0.5)
 
@@ -1031,11 +1067,12 @@ def scrape_lu_crawler(limit: int | None = None) -> int:
 # SCHAFFHAUSEN (SH) - HTML Crawler
 # =============================================================================
 
-def scrape_sh_crawler(limit: int | None = None) -> int:
+def scrape_sh_crawler(limit: int | None = None, from_date: date | None = None, to_date: date | None = None) -> int:
     """Scrape decisions from Schaffhausen Obergericht."""
     print("Scraping Schaffhausen (obergerichtsentscheide.sh.ch)...")
 
     base_url = "https://obergerichtsentscheide.sh.ch"
+    min_year = from_date.year if from_date else None
 
     imported = 0
     skipped = 0
@@ -1065,6 +1102,11 @@ def scrape_sh_crawler(limit: int | None = None) -> int:
                     continue
 
                 if ".pdf" in href.lower():
+                    if min_year:
+                        yr = _url_year(full_url)
+                        if yr and yr < min_year:
+                            continue
+
                     stable_id = stable_uuid_url(f"sh:{full_url}")
 
                     existing = session.get(Decision, stable_id)
@@ -1119,7 +1161,8 @@ def scrape_sh_crawler(limit: int | None = None) -> int:
                         skipped += 1
 
                 elif full_url not in visited and "obergerichtsentscheide" in full_url:
-                    to_visit.append(full_url)
+                    if not min_year or not _url_year(full_url) or _url_year(full_url) >= min_year:
+                        to_visit.append(full_url)
 
             time.sleep(0.5)
 
@@ -1134,12 +1177,13 @@ def scrape_sh_crawler(limit: int | None = None) -> int:
 # SCHWYZ (SZ) - HTML Crawler
 # =============================================================================
 
-def scrape_sz_crawler(limit: int | None = None) -> int:
+def scrape_sz_crawler(limit: int | None = None, from_date: date | None = None, to_date: date | None = None) -> int:
     """Scrape decisions from Schwyz Kantonsgericht."""
     print("Scraping Schwyz (kgsz.ch)...")
 
     base_url = "https://www.kgsz.ch"
     start_url = "https://www.kgsz.ch/rechtsprechung/"
+    min_year = from_date.year if from_date else None
 
     imported = 0
     skipped = 0
@@ -1166,6 +1210,11 @@ def scrape_sz_crawler(limit: int | None = None) -> int:
                 full_url = urljoin(base_url, href)
 
                 if ".pdf" in href.lower():
+                    if min_year:
+                        yr = _url_year(full_url)
+                        if yr and yr < min_year:
+                            continue
+
                     stable_id = stable_uuid_url(f"sz:{full_url}")
 
                     existing = session.get(Decision, stable_id)
@@ -1220,7 +1269,8 @@ def scrape_sz_crawler(limit: int | None = None) -> int:
                         skipped += 1
 
                 elif "rechtsprechung" in href.lower() and full_url not in visited:
-                    to_visit.append(full_url)
+                    if not min_year or not _url_year(full_url) or _url_year(full_url) >= min_year:
+                        to_visit.append(full_url)
 
             time.sleep(0.5)
 
@@ -1235,12 +1285,13 @@ def scrape_sz_crawler(limit: int | None = None) -> int:
 # VALAIS/WALLIS (VS) - HTML Crawler
 # =============================================================================
 
-def scrape_vs_crawler(limit: int | None = None) -> int:
+def scrape_vs_crawler(limit: int | None = None, from_date: date | None = None, to_date: date | None = None) -> int:
     """Scrape decisions from Valais lawsearch portal."""
     print("Scraping Valais (apps.vs.ch/le/)...")
 
     base_url = "https://apps.vs.ch"
     start_url = "https://apps.vs.ch/le/"
+    min_year = from_date.year if from_date else None
 
     imported = 0
     skipped = 0
@@ -1267,6 +1318,11 @@ def scrape_vs_crawler(limit: int | None = None) -> int:
                 full_url = urljoin(base_url, href)
 
                 if ".pdf" in href.lower():
+                    if min_year:
+                        yr = _url_year(full_url)
+                        if yr and yr < min_year:
+                            continue
+
                     stable_id = stable_uuid_url(f"vs:{full_url}")
 
                     existing = session.get(Decision, stable_id)
@@ -1324,7 +1380,8 @@ def scrape_vs_crawler(limit: int | None = None) -> int:
                         skipped += 1
 
                 elif "/le/" in full_url and full_url not in visited:
-                    to_visit.append(full_url)
+                    if not min_year or not _url_year(full_url) or _url_year(full_url) >= min_year:
+                        to_visit.append(full_url)
 
             time.sleep(0.5)
 
@@ -1339,11 +1396,12 @@ def scrape_vs_crawler(limit: int | None = None) -> int:
 # NEUCHÂTEL (NE) - FindInfoWeb
 # =============================================================================
 
-def scrape_ne_crawler(limit: int | None = None) -> int:
+def scrape_ne_crawler(limit: int | None = None, from_date: date | None = None, to_date: date | None = None) -> int:
     """Scrape decisions from Neuchâtel FindInfoWeb database."""
     print("Scraping Neuchâtel (jurisprudence.ne.ch)...")
 
     base_url = "https://jurisprudence.ne.ch/scripts/omnisapi.dll"
+    min_year = from_date.year if from_date else None
 
     imported = 0
     skipped = 0
@@ -1435,6 +1493,21 @@ def scrape_ne_crawler(limit: int | None = None) -> int:
                 case_match = re.search(r"([A-Z]+\.?\d{4}\.\d+|[A-Z]+\.\d+[-/]\d{4})", content)
                 case_number = case_match.group(1) if case_match else decision_id
 
+                # Date filtering: extract year from case number or content
+                if min_year and case_number:
+                    yr_match = re.search(r'(20[012]\d)', case_number)
+                    if yr_match and int(yr_match.group(1)) < min_year:
+                        skipped += 1
+                        continue
+
+                decision_date = None
+                date_match = re.search(r"(\d{1,2}\.\d{1,2}\.\d{4}|\d{1,2}\s+\w+\s+\d{4})", content[:1000])
+                if date_match:
+                    decision_date = parse_date_flexible(date_match.group(1))
+                if from_date and decision_date and decision_date < from_date:
+                    skipped += 1
+                    continue
+
                 title_elem = detail_soup.find("h1") or detail_soup.find("title")
                 title_text = title_elem.get_text(strip=True) if title_elem else f"NE {case_number}"
 
@@ -1448,7 +1521,7 @@ def scrape_ne_crawler(limit: int | None = None) -> int:
                         court="Tribunal cantonal",
                         chamber=None,
                         docket=case_number,
-                        decision_date=None,
+                        decision_date=decision_date,
                         published_date=None,
                         title=title_text[:500],
                         language="fr",
@@ -1490,12 +1563,13 @@ def scrape_ne_crawler(limit: int | None = None) -> int:
 # AARGAU (AG) - AGVE Portal
 # =============================================================================
 
-def scrape_ag_crawler(limit: int | None = None) -> int:
+def scrape_ag_crawler(limit: int | None = None, from_date: date | None = None, to_date: date | None = None) -> int:
     """Scrape decisions from Aargau AGVE portal."""
     print("Scraping Aargau (ag.ch AGVE)...")
 
     base_url = "https://www.ag.ch"
     start_url = "https://www.ag.ch/de/themen/recht-justiz/gesetze-entscheide/agve"
+    min_year = from_date.year if from_date else None
 
     imported = 0
     skipped = 0
@@ -1522,6 +1596,11 @@ def scrape_ag_crawler(limit: int | None = None) -> int:
                 full_url = urljoin(base_url, href)
 
                 if ".pdf" in href.lower():
+                    if min_year:
+                        yr = _url_year(full_url)
+                        if yr and yr < min_year:
+                            continue
+
                     stable_id = stable_uuid_url(f"ag:{full_url}")
 
                     existing = session.get(Decision, stable_id)
@@ -1576,7 +1655,8 @@ def scrape_ag_crawler(limit: int | None = None) -> int:
                         skipped += 1
 
                 elif ("agve" in href.lower() or "entscheide" in href.lower()) and full_url not in visited and full_url.startswith(base_url):
-                    to_visit.append(full_url)
+                    if not min_year or not _url_year(full_url) or _url_year(full_url) >= min_year:
+                        to_visit.append(full_url)
 
             time.sleep(0.5)
 
@@ -1591,12 +1671,13 @@ def scrape_ag_crawler(limit: int | None = None) -> int:
 # BASEL-LANDSCHAFT (BL) - Swisslex/BL Portal
 # =============================================================================
 
-def scrape_bl_crawler(limit: int | None = None) -> int:
+def scrape_bl_crawler(limit: int | None = None, from_date: date | None = None, to_date: date | None = None) -> int:
     """Scrape decisions from Basel-Landschaft portal."""
     print("Scraping Basel-Landschaft (baselland.ch)...")
 
     base_url = "https://www.baselland.ch"
     start_url = "https://www.baselland.ch/politik-und-behorden/gerichte/rechtsprechung"
+    min_year = from_date.year if from_date else None
 
     imported = 0
     skipped = 0
@@ -1623,6 +1704,11 @@ def scrape_bl_crawler(limit: int | None = None) -> int:
                 full_url = urljoin(base_url, href)
 
                 if ".pdf" in href.lower():
+                    if min_year:
+                        yr = _url_year(full_url)
+                        if yr and yr < min_year:
+                            continue
+
                     stable_id = stable_uuid_url(f"bl:{full_url}")
 
                     existing = session.get(Decision, stable_id)
@@ -1677,7 +1763,8 @@ def scrape_bl_crawler(limit: int | None = None) -> int:
                         skipped += 1
 
                 elif "rechtsprechung" in href.lower() and full_url not in visited and full_url.startswith(base_url):
-                    to_visit.append(full_url)
+                    if not min_year or not _url_year(full_url) or _url_year(full_url) >= min_year:
+                        to_visit.append(full_url)
 
             time.sleep(0.5)
 
@@ -1970,11 +2057,12 @@ def scrape_ur_crawler(
 # APPENZELL AUSSERRHODEN (AR) - LEv4 API (rechtsprechung.ar.ch)
 # =============================================================================
 
-def scrape_ar_lev4(limit: int | None = None) -> int:
+def scrape_ar_lev4(limit: int | None = None, from_date: date | None = None, to_date: date | None = None) -> int:
     """Scrape decisions from Appenzell Ausserrhoden via LEv4 API.
 
     AR uses the Weblaw LEv4 platform at rechtsprechung.ar.ch with a
-    Netlify Functions API backend.
+    Netlify Functions API backend.  When *from_date* is set, decisions
+    older than that date are skipped before downloading the PDF.
     """
     print("Scraping Appenzell Ausserrhoden (rechtsprechung.ar.ch via LEv4 API)...")
 
@@ -2046,6 +2134,18 @@ def scrape_ar_lev4(limit: int | None = None) -> int:
                     stats.add_skipped()
                     continue
 
+                # Parse decision date early so we can skip old decisions before PDF download
+                decision_date = None
+                date_str = date_map.get("decisionDate", "")
+                if date_str:
+                    decision_date = parse_date_flexible(date_str)
+                if from_date and decision_date and decision_date < from_date:
+                    stats.add_skipped()
+                    continue
+                if to_date and decision_date and decision_date > to_date:
+                    stats.add_skipped()
+                    continue
+
                 # Download PDF
                 try:
                     rate_limiter.wait()
@@ -2080,12 +2180,6 @@ def scrape_ar_lev4(limit: int | None = None) -> int:
                     court = "Kantonsgericht"
                 elif authority == "Verwaltung":
                     court = "Verwaltungsgericht"
-
-                # Parse decision date
-                decision_date = None
-                date_str = date_map.get("decisionDate", "")
-                if date_str:
-                    decision_date = parse_date_flexible(date_str)
 
                 try:
                     dec = Decision(
@@ -2139,7 +2233,7 @@ def scrape_ar_lev4(limit: int | None = None) -> int:
 # JURA (JU) - Direct HTML Crawler (French)
 # =============================================================================
 
-def scrape_ju_crawler(limit: int | None = None) -> int:
+def scrape_ju_crawler(limit: int | None = None, from_date: date | None = None, to_date: date | None = None) -> int:
     """Scrape decisions from Jura (jura.ch/JUST)."""
     print("Scraping Jura (jura.ch)...")
 
@@ -2148,6 +2242,7 @@ def scrape_ju_crawler(limit: int | None = None) -> int:
         "https://www.jura.ch/JUST/Instances-judiciaires/Tribunal-cantonal/Jurisprudence-recente.html",
         "https://www.jura.ch/JUST/Instances-judiciaires/Tribunal-cantonal/Revue-jurassienne-de-jurisprudence.html",
     ]
+    min_year = from_date.year if from_date else None
 
     stats = ScraperStats()
     visited = set()
@@ -2172,6 +2267,11 @@ def scrape_ju_crawler(limit: int | None = None) -> int:
                 full_url = urljoin(base_url, href)
 
                 if ".pdf" in href.lower():
+                    if min_year:
+                        yr = _url_year(full_url)
+                        if yr and yr < min_year:
+                            continue
+
                     stable_id = stable_uuid_url(f"ju:{full_url}")
 
                     existing = session.get(Decision, stable_id)
@@ -2198,6 +2298,10 @@ def scrape_ju_crawler(limit: int | None = None) -> int:
                     date_match = re.search(r"(\d{1,2}\s+\w+\s+\d{4}|\d{2}\.\d{2}\.\d{4})", content[:1000])
                     if date_match:
                         decision_date = parse_date_flexible(date_match.group(1))
+
+                    if from_date and decision_date and decision_date < from_date:
+                        stats.add_skipped()
+                        continue
 
                     try:
                         dec = Decision(
@@ -2230,7 +2334,8 @@ def scrape_ju_crawler(limit: int | None = None) -> int:
                         stats.add_error()
 
                 elif ("jurisprudence" in href.lower() or "just" in href.lower()) and full_url not in visited and full_url.startswith(base_url):
-                    to_visit.append(full_url)
+                    if not min_year or not _url_year(full_url) or _url_year(full_url) >= min_year:
+                        to_visit.append(full_url)
 
             time.sleep(0.5)
 
@@ -2581,7 +2686,7 @@ def scrape_nw_dataentities(
 # ZUG (ZG) - Direct Crawler with API fallback
 # =============================================================================
 
-def scrape_zg_crawler(limit: int | None = None) -> int:
+def scrape_zg_crawler(limit: int | None = None, from_date: date | None = None, to_date: date | None = None) -> int:
     """Scrape decisions from Zug (zg.ch).
 
     Zug publishes decisions at zg.ch (without www) with PDF links
@@ -2596,6 +2701,7 @@ def scrape_zg_crawler(limit: int | None = None) -> int:
         # Obergericht (High Court)
         "https://zg.ch/de/recht-justiz/einsicht-entscheide-und-urteile/gerichtspraxis-des-obergerichts-des-kantons-zug",
     ]
+    min_year = from_date.year if from_date else None
 
     stats = ScraperStats()
     visited = set()
@@ -2625,6 +2731,11 @@ def scrape_zg_crawler(limit: int | None = None) -> int:
                     full_url = urljoin(base_url, href)
 
                 if ".pdf" in href.lower():
+                    if min_year:
+                        yr = _url_year(full_url)
+                        if yr and yr < min_year:
+                            continue
+
                     stable_id = stable_uuid_url(f"zg:{full_url}")
 
                     existing = session.get(Decision, stable_id)
@@ -2660,6 +2771,10 @@ def scrape_zg_crawler(limit: int | None = None) -> int:
                     if date_match:
                         decision_date = parse_date_flexible(date_match.group(1))
 
+                    if from_date and decision_date and decision_date < from_date:
+                        stats.add_skipped()
+                        continue
+
                     try:
                         dec = Decision(
                             id=stable_id,
@@ -2692,7 +2807,8 @@ def scrape_zg_crawler(limit: int | None = None) -> int:
                         stats.add_error()
 
                 elif ("entscheid" in href.lower() or "gericht" in href.lower() or "recht-justiz" in href.lower()) and full_url not in visited and full_url.startswith(base_url):
-                    to_visit.append(full_url)
+                    if not min_year or not _url_year(full_url) or _url_year(full_url) >= min_year:
+                        to_visit.append(full_url)
 
             time.sleep(0.5)
 
@@ -3474,7 +3590,7 @@ GE_COURTS = {
 }
 
 
-def scrape_ge_crawler(limit: int | None = None) -> int:
+def scrape_ge_crawler(limit: int | None = None, from_date: date | None = None, to_date: date | None = None) -> int:
     """Scrape decisions from Geneva (justice.ge.ch)."""
     print("Scraping Geneva (justice.ge.ch)...")
 
@@ -3482,6 +3598,7 @@ def scrape_ge_crawler(limit: int | None = None) -> int:
 
     # Geneva uses a modern web app - we need to target the PDF archive URLs directly
     # The decisions are organized by court and year
+    min_year = from_date.year if from_date else None
     stats = ScraperStats()
     visited = set()
 
@@ -3520,6 +3637,11 @@ def scrape_ge_crawler(limit: int | None = None) -> int:
                     full_url = urljoin(url, href)
 
                 if ".pdf" in href.lower():
+                    if min_year:
+                        yr = _url_year(full_url)
+                        if yr and yr < min_year:
+                            continue
+
                     stable_id = stable_uuid_url(f"ge:{full_url}")
 
                     existing = session.get(Decision, stable_id)
@@ -3556,6 +3678,10 @@ def scrape_ge_crawler(limit: int | None = None) -> int:
                     if date_match:
                         decision_date = parse_date_flexible(date_match.group(1))
 
+                    if from_date and decision_date and decision_date < from_date:
+                        stats.add_skipped()
+                        continue
+
                     try:
                         dec = Decision(
                             id=stable_id,
@@ -3589,7 +3715,8 @@ def scrape_ge_crawler(limit: int | None = None) -> int:
                 # Follow links to find more decisions
                 elif any(kw in href.lower() for kw in ["jurisprudence", "justice", "decision", "arret", "jugement"]):
                     if full_url not in visited and (full_url.startswith(base_url) or "ge.ch" in full_url):
-                        to_visit.append(full_url)
+                        if not min_year or not _url_year(full_url) or _url_year(full_url) >= min_year:
+                            to_visit.append(full_url)
 
             time.sleep(0.5)
 
@@ -3610,35 +3737,35 @@ SCRAPERS = {
     # FindInfoWeb-based
     "SO": ("Solothurn", scrape_so_findinfoweb, True),
     "BS": ("Basel-Stadt", scrape_bs_findinfoweb, True),
-    "NE": ("Neuchâtel", scrape_ne_crawler, False),  # FindInfoWeb (no date filter)
+    "NE": ("Neuchâtel", scrape_ne_crawler, True),
     # Sitemap-based
-    "BE": ("Bern", scrape_be_sitemap, False),
+    "BE": ("Bern", scrape_be_sitemap, True),
     # Custom/Special
-    "AI": ("Appenzell Innerrhoden", scrape_ai_pdfs, True),  # Year-based archive
-    "TG": ("Thurgau", scrape_tg_confluence, True),  # Confluence portal
+    "AI": ("Appenzell Innerrhoden", scrape_ai_pdfs, True),
+    "TG": ("Thurgau", scrape_tg_confluence, True),
     # HTML Crawlers - German-speaking
-    "SG": ("St. Gallen", scrape_sg_crawler, False),
-    "LU": ("Luzern", scrape_lu_crawler, False),
-    "SH": ("Schaffhausen", scrape_sh_crawler, False),
-    "SZ": ("Schwyz", scrape_sz_crawler, False),
-    "AG": ("Aargau", scrape_ag_crawler, False),
-    "BL": ("Basel-Landschaft", scrape_bl_crawler, False),
-    "UR": ("Uri", scrape_ur_crawler, True),  # Direct: ur.ch/rechtsprechung
-    "NW": ("Nidwalden", scrape_nw_dataentities, True),  # JSON data-entities: nw.ch/rechtsprechung
-    "ZG": ("Zug", scrape_zg_crawler, False),  # Direct: zg.ch/recht-justiz
+    "SG": ("St. Gallen", scrape_sg_crawler, True),
+    "LU": ("Luzern", scrape_lu_crawler, True),
+    "SH": ("Schaffhausen", scrape_sh_crawler, True),
+    "SZ": ("Schwyz", scrape_sz_crawler, True),
+    "AG": ("Aargau", scrape_ag_crawler, True),
+    "BL": ("Basel-Landschaft", scrape_bl_crawler, True),
+    "UR": ("Uri", scrape_ur_crawler, True),
+    "NW": ("Nidwalden", scrape_nw_dataentities, True),
+    "ZG": ("Zug", scrape_zg_crawler, True),
     # LEv4 API (Weblaw platform)
-    "AR": ("Appenzell AR", scrape_ar_lev4, False),  # LEv4 API: rechtsprechung.ar.ch
+    "AR": ("Appenzell AR", scrape_ar_lev4, True),
     # Via entscheidsuche.ch (official portals use complex JS or block access)
-    "GL": ("Glarus", scrape_gl_entscheidsuche, True),  # entscheidsuche.ch API (~70 docs)
-    "GR": ("Graubünden", scrape_gr_entscheidsuche, True),  # entscheidsuche.ch (~18,945 docs)
-    "OW": ("Obwalden", scrape_ow_entscheidsuche, True),  # entscheidsuche.ch (~2,201 docs)
+    "GL": ("Glarus", scrape_gl_entscheidsuche, True),
+    "GR": ("Graubünden", scrape_gr_entscheidsuche, True),
+    "OW": ("Obwalden", scrape_ow_entscheidsuche, True),
     # HTML Crawlers - French-speaking
     "FR": ("Fribourg", scrape_fr_crawler, True),
-    "JU": ("Jura", scrape_ju_crawler, False),  # Direct: jura.ch/JUST
-    "VD": ("Vaud", scrape_vd_findinfoweb, True),  # FindInfoWeb: jurisprudence.vd.ch
-    "GE": ("Genève", scrape_ge_crawler, False),  # Direct: justice.ge.ch
+    "JU": ("Jura", scrape_ju_crawler, True),
+    "VD": ("Vaud", scrape_vd_findinfoweb, True),
+    "GE": ("Genève", scrape_ge_crawler, True),
     # Bilingual
-    "VS": ("Valais", scrape_vs_crawler, False),
+    "VS": ("Valais", scrape_vs_crawler, True),
     # Italian-speaking
     "TI": ("Ticino", scrape_ti_findinfoweb, True),  # FindInfoWeb: sentenze.ti.ch
     # Zürich (separate script)
@@ -3664,33 +3791,26 @@ def scrape_all_cantons(
     from_date: date | None = None,
     to_date: date | None = None,
     historical: bool = False,
-    per_scraper_timeout: int = 900,
 ) -> int:
     """Run all cantonal scrapers.
 
     Args:
         limit: Maximum decisions per scraper
-        from_date: Only import decisions after this date (where supported).
+        from_date: Only import decisions after this date.
             Ignored if historical=True.
-        to_date: Only import decisions before this date (where supported).
+        to_date: Only import decisions before this date.
             Ignored if historical=True.
         historical: If True, fetch ALL decisions without date restrictions.
             This enables complete archive capture for initial database population.
-        per_scraper_timeout: Max seconds per scraper (default 900 = 15 min).
-            Set to 0 to disable. Ignored in historical mode.
 
     Returns:
         Total number of decisions imported
     """
-    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
-
     total = 0
     results = {}
 
-    # In historical mode, disable date filtering and timeouts
     effective_from_date = None if historical else from_date
     effective_to_date = None if historical else to_date
-    timeout = 0 if historical else per_scraper_timeout
 
     if historical:
         print("Historical mode: Fetching complete archives without date restrictions")
@@ -3700,8 +3820,6 @@ def scrape_all_cantons(
         print(f"Running {name} ({code}) scraper")
         if historical:
             print("  [HISTORICAL MODE - No date filtering]")
-        if timeout and not supports_date:
-            print(f"  [Timeout: {timeout}s]")
         print("="*60)
 
         try:
@@ -3710,19 +3828,7 @@ def scrape_all_cantons(
             else:
                 kwargs = dict(limit=limit)
 
-            # Apply timeout to scrapers without date support (they may crawl forever)
-            if timeout and not supports_date:
-                with ThreadPoolExecutor(max_workers=1) as pool:
-                    future = pool.submit(scraper_func, **kwargs)
-                    try:
-                        count = future.result(timeout=timeout)
-                    except FuturesTimeoutError:
-                        print(f"  TIMEOUT after {timeout}s — moving to next scraper")
-                        results[code] = {"status": "timeout", "count": 0}
-                        continue
-            else:
-                count = scraper_func(**kwargs)
-
+            count = scraper_func(**kwargs)
             results[code] = {"status": "success", "count": count}
             total += count
         except Exception as e:
@@ -3737,8 +3843,6 @@ def scrape_all_cantons(
         status = result["status"]
         if status == "success":
             print(f"  {code} ({name}): {result['count']} imported")
-        elif status == "timeout":
-            print(f"  {code} ({name}): TIMEOUT")
         else:
             print(f"  {code} ({name}): ERROR - {result['error']}")
     print(f"\nTotal imported: {total}")

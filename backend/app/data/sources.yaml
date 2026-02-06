@@ -1,0 +1,433 @@
+version: 1
+sources:
+- id: bger
+  name: Bundesgericht
+  level: federal
+  canton: null
+  homepage: https://www.bger.ch/
+  start_urls:
+  - https://www.bger.ch/index/juridiction/juridiction-inherit-template/juridiction-recht.htm
+  - https://www.bger.ch/ext/eurospider/live/de/php/aza/http/index.php?lang=de&type=simple_query
+  connector: bger_search
+  languages:
+  - de
+  - fr
+  - it
+  notes: Urteile via Eurospider-Suche; HTML-Volltext.
+
+- id: bger_atf
+  name: Bundesgericht – Amtliche Sammlung (BGE/ATF)
+  level: federal
+  canton: null
+  homepage: https://www.bger.ch/
+  start_urls:
+  - https://www.bger.ch/ext/eurospider/live/de/php/atf/http/index.php?lang=de&type=simple_query
+  connector: bger_search
+  languages:
+  - de
+  - fr
+  - it
+  notes: Amtliche Sammlung. Separate Eurospider collection; may overlap with AZA.
+- id: bvger
+  name: Bundesverwaltungsgericht
+  level: federal
+  homepage: https://www.bvger.ch/
+  start_urls:
+  - https://www.bvger.ch/bvger/de/home/rechtsprechung/entscheide.html
+  - https://bvger.weblaw.ch/
+  connector: weblaw
+  languages:
+  - de
+  - fr
+  - it
+- id: bpatger
+  name: Bundespatentgericht
+  level: federal
+  homepage: https://www.bundespatentgericht.ch/
+  start_urls:
+  - https://www.bundespatentgericht.ch/de/entscheide
+  - https://www.bundespatentgericht.ch/en/decisions
+  - https://www.bundespatentgericht.ch/fr/decisions
+  - https://www.bundespatentgericht.ch/it/decisioni
+  connector: bpatger
+  languages:
+  - de
+  - fr
+  - it
+  - en
+- id: bstger
+  name: Bundesstrafgericht
+  level: federal
+  homepage: https://bstger.weblaw.ch/
+  start_urls:
+  - https://bstger.weblaw.ch/
+  connector: weblaw
+  languages:
+  - de
+  - fr
+  - it
+  notes: Portal auf weblaw; viele Entscheide als PDF verfügbar (z.B. /pdf/...).
+- id: weko
+  name: Wettbewerbskommission (WEKO)
+  level: federal
+  canton: null
+  homepage: https://www.weko.admin.ch/
+  start_urls:
+  - https://www.weko.admin.ch/weko/de/home/praxis/publizierte-entscheide.html
+  connector: crawler
+  languages:
+  - de
+  - fr
+  - it
+  notes: Competition Commission decisions and rulings.
+- id: edoeb
+  name: Eidgenössischer Datenschutz- und Öffentlichkeitsbeauftragter (EDÖB)
+  level: federal
+  canton: null
+  homepage: https://www.edoeb.admin.ch/
+  start_urls:
+  - https://www.edoeb.admin.ch/de/empfehlungen-stellungnahmen
+  connector: crawler
+  languages:
+  - de
+  - fr
+  - it
+  notes: Federal Data Protection Commissioner recommendations and decisions.
+- id: ag
+  name: Aargauische Gerichts- und Verwaltungsentscheide (AGVE)
+  level: cantonal
+  canton: AG
+  homepage: https://www.ag.ch/de/themen/recht-justiz/gesetze-entscheide/agve
+  start_urls:
+  - https://www.ag.ch/de/themen/recht-justiz/gesetze-entscheide/agve
+  - https://www.ag.ch/de/themen/recht-justiz/recht/rechtsprechung
+  connector: crawler
+  languages:
+  - de
+- id: ai
+  name: Appenzell Innerrhoden – Aktuelle Rechtsprechung
+  level: cantonal
+  canton: AI
+  homepage: https://www.ai.ch/gerichte/kantonsgericht/rechtsprechung
+  start_urls:
+  - https://www.ai.ch/gerichte/kantonsgericht/rechtsprechung
+  connector: crawler
+  languages:
+  - de
+- id: ar
+  name: Appenzell Ausserrhoden – Obergericht Rechtsprechung
+  level: cantonal
+  canton: AR
+  homepage: https://ar.ch/gerichte/obergericht/
+  start_urls:
+  - https://ar.ch/gerichte/obergericht/gerichtsentscheide-verwaltungsrecht/
+  - https://ar.ch/gerichte/obergericht/gerichtsentscheide-zivil-und-strafrecht/
+  connector: crawler
+  languages:
+  - de
+- id: bl
+  name: Basel-Landschaft – Rechtsprechungsportal (Swisslex)
+  level: cantonal
+  canton: BL
+  homepage: https://www.baselland.ch/politik-und-behorden/gerichte/rechtsprechung
+  start_urls:
+  - https://www.baselland.ch/politik-und-behorden/gerichte/rechtsprechung
+  - https://bl.swisslex.ch/
+  connector: crawler
+  languages:
+  - de
+  notes: Portal ist auf Swisslex gehostet; Zugriff kann Einschränkungen haben.
+- id: bs
+  name: Basel-Stadt – Rechtsprechung (Appellationsgericht)
+  level: cantonal
+  canton: BS
+  homepage: https://www.bs.ch/gerichte-judikative/appellationsgericht/gerichtsentscheide
+  start_urls:
+  - https://www.bs.ch/gerichte-judikative/appellationsgericht/gerichtsentscheide
+  - https://rechtsprechung.gerichte.bs.ch/
+  connector: crawler
+  languages:
+  - de
+- id: be_zsg
+  name: Bern – Entscheide Zivil- und Strafgerichtsbarkeit
+  level: cantonal
+  canton: BE
+  homepage: https://www.zsg-entscheide.apps.be.ch/tribunapublikation/
+  start_urls:
+  - https://www.zsg-entscheide.apps.be.ch/tribunapublikation/
+  connector: sitemap
+  languages:
+  - de
+  - fr
+  notes: JS-only (SPA). Ingest über SitemapConnector (robots/sitemap.xml) statt Link-Crawling.
+- id: be_vg
+  name: Bern – Urteile Verwaltungsgericht
+  level: cantonal
+  canton: BE
+  homepage: https://www.vg-urteile.apps.be.ch/tribunapublikation/
+  start_urls:
+  - https://www.vg-urteile.apps.be.ch/tribunapublikation/
+  connector: sitemap
+  languages:
+  - de
+  - fr
+  notes: JS-only (SPA). Ingest über SitemapConnector (robots/sitemap.xml) statt Link-Crawling.
+- id: fr
+  name: Freiburg – Tribuna Publikation
+  level: cantonal
+  canton: FR
+  homepage: https://www.fr.ch/de/staat-und-recht/justiz/suchmaschine-tribuna-publikation
+  start_urls:
+  - https://www.fr.ch/de/staat-und-recht/justiz/suchmaschine-tribuna-publikation
+  connector: crawler
+  languages:
+  - de
+  - fr
+- id: ge
+  name: Genève – Jurisprudence
+  level: cantonal
+  canton: GE
+  homepage: https://ge.ch/justice/dans-la-jurisprudence
+  start_urls:
+  - https://ge.ch/justice/dans-la-jurisprudence
+  - https://justice.ge.ch/fr
+  connector: crawler
+  languages:
+  - fr
+- id: gl
+  name: Glarus – Entscheiddatenbank der Gerichte
+  level: cantonal
+  canton: GL
+  homepage: https://www.gl.ch/entscheiddatenbank
+  start_urls:
+  - https://www.gl.ch/entscheiddatenbank
+  connector: crawler
+  languages:
+  - de
+- id: gr
+  name: Graubünden – Entscheidsuche Obergericht
+  level: cantonal
+  canton: GR
+  homepage: https://entscheidsuche.gr.ch/
+  start_urls:
+  - https://entscheidsuche.gr.ch/
+  connector: sitemap
+  languages:
+  - de
+  - it
+  - rm
+  notes: JS-only Portal (Obergericht Graubünden). Ingest via SitemapConnector.
+- id: ju
+  name: Jura – Jurisprudence récente / RJJ
+  level: cantonal
+  canton: JU
+  homepage: https://www.jura.ch/JUST/Instances-judiciaires/Tribunal-cantonal/Jurisprudence-recente.html
+  start_urls:
+  - https://www.jura.ch/JUST/Instances-judiciaires/Tribunal-cantonal/Jurisprudence-recente.html
+  - https://www.jura.ch/JUST/Instances-judiciaires/Tribunal-cantonal/Revue-jurassienne-de-jurisprudence.html
+  connector: crawler
+  languages:
+  - fr
+- id: lu
+  name: Luzern – LGVE
+  level: cantonal
+  canton: LU
+  homepage: https://gerichte.lu.ch/recht_sprechung/lgve
+  start_urls:
+  - https://gerichte.lu.ch/recht_sprechung/lgve
+  connector: crawler
+  languages:
+  - de
+- id: ne_tc
+  name: Neuchâtel – Tribunal cantonal
+  level: cantonal
+  canton: NE
+  homepage: https://jurisprudence.ne.ch/
+  start_urls:
+  - https://jurisprudence.ne.ch/
+  connector: crawler
+  languages:
+  - fr
+- id: ne_adm
+  name: Neuchâtel – Autorités administratives
+  level: cantonal
+  canton: NE
+  homepage: https://jurisprudenceadm.ne.ch/
+  start_urls:
+  - https://jurisprudenceadm.ne.ch/
+  connector: crawler
+  languages:
+  - fr
+- id: nw
+  name: Nidwalden – Rechtsprechung
+  level: cantonal
+  canton: NW
+  homepage: https://www.nw.ch/vwgrechtsprechung
+  start_urls:
+  - https://www.nw.ch/vwgrechtsprechung
+  connector: crawler
+  languages:
+  - de
+- id: ow
+  name: Obwalden – Rechtsprechung
+  level: cantonal
+  canton: OW
+  homepage: https://rechtsprechung.ow.ch/le/
+  start_urls:
+  - https://rechtsprechung.ow.ch/le/
+  connector: sitemap
+  languages:
+  - de
+  notes: JS-only (Vaadin). Ingest via SitemapConnector.
+- id: sg
+  name: St. Gallen – Rechtsprechung
+  level: cantonal
+  canton: SG
+  homepage: https://www.gerichte.sg.ch/home/dienstleistungen/rechtsprechung.html
+  start_urls:
+  - https://www.gerichte.sg.ch/home/dienstleistungen/rechtsprechung.html
+  - https://publikationen.sg.ch/rechtsprechung-gerichte.html
+  connector: crawler
+  languages:
+  - de
+- id: sh
+  name: Schaffhausen – Obergerichtsentscheide
+  level: cantonal
+  canton: SH
+  homepage: https://obergerichtsentscheide.sh.ch/
+  start_urls:
+  - https://obergerichtsentscheide.sh.ch/
+  connector: crawler
+  languages:
+  - de
+- id: so
+  name: Solothurn – Gerichtsentscheide (FindInfoWeb)
+  level: cantonal
+  canton: SO
+  homepage: https://gerichtsentscheide.so.ch/
+  start_urls:
+  - https://gerichtsentscheide.so.ch/
+  connector: crawler
+  languages:
+  - de
+- id: sz
+  name: Schwyz – Kantonsgericht Rechtsprechung
+  level: cantonal
+  canton: SZ
+  homepage: https://www.kgsz.ch/rechtsprechung/
+  start_urls:
+  - https://www.kgsz.ch/rechtsprechung/
+  - https://www.sz.ch/behoerden/justiz/kantonsgericht/rechtsprechung.html
+  connector: crawler
+  languages:
+  - de
+- id: tg
+  name: Thurgau – Rechtsprechung
+  level: cantonal
+  canton: TG
+  homepage: https://rechtsprechung.tg.ch
+  start_urls:
+  - https://rechtsprechung.tg.ch
+  connector: crawler
+  languages:
+  - de
+- id: ti
+  name: Ticino – Sentenze e decisioni
+  level: cantonal
+  canton: TI
+  homepage: https://www.sentenze.ti.ch/
+  start_urls:
+  - https://www.sentenze.ti.ch/
+  connector: crawler
+  languages:
+  - it
+- id: ur
+  name: Uri – Rechtsprechung (ausgewählt)
+  level: cantonal
+  canton: UR
+  homepage: https://www.ur.ch/rechtsprechung
+  start_urls:
+  - https://www.ur.ch/rechtsprechung
+  connector: crawler
+  languages:
+  - de
+- id: vd
+  name: Vaud – Jurisprudence du Tribunal cantonal
+  level: cantonal
+  canton: VD
+  homepage: https://www.vd.ch/justice/jurisprudence-et-lois/jurisprudence-du-tribunal-cantonal-et-du-tripac
+  start_urls:
+  - https://www.vd.ch/justice/jurisprudence-et-lois/jurisprudence-du-tribunal-cantonal-et-du-tripac
+  connector: crawler
+  languages:
+  - fr
+- id: vs
+  name: Valais/Wallis – Rechtsprechung (Lawsearch)
+  level: cantonal
+  canton: VS
+  homepage: https://apps.vs.ch/le/
+  start_urls:
+  - https://apps.vs.ch/le/
+  - https://www.vs.ch/web/tribunaux/jurisprudence
+  connector: crawler
+  languages:
+  - de
+  - fr
+- id: zg
+  name: Zug – Entscheide/Urteile + GVP
+  level: cantonal
+  canton: ZG
+  homepage: https://zg.ch/de/recht-justiz/einsicht-entscheide-und-urteile
+  start_urls:
+  - https://zg.ch/de/recht-justiz/einsicht-entscheide-und-urteile
+  - https://bgs.zg.ch/app/de/decrees/fulltext_search
+  connector: crawler
+  languages:
+  - de
+- id: zh
+  name: Zürich – Entscheide (Gerichte ZH)
+  level: cantonal
+  canton: ZH
+  homepage: https://www.gerichte-zh.ch/entscheide/
+  start_urls:
+  - https://www.gerichte-zh.ch/entscheide/entscheide-anzeigen.html
+  connector: crawler
+  languages:
+  - de
+- id: zh_steuerrekurs
+  name: Zürich – Steuerrekursgericht
+  level: cantonal
+  canton: ZH
+  homepage: https://www.strgzh.ch/
+  start_urls:
+  - https://www.strgzh.ch/entscheide/
+  connector: crawler
+  languages:
+  - de
+  notes: Zürich Tax Appeals Court decisions.
+- id: zh_baurekurs
+  name: Zürich – Baurekursgericht
+  level: cantonal
+  canton: ZH
+  homepage: https://www.brgzh.ch/
+  start_urls:
+  - https://www.brgzh.ch/entscheide/
+  connector: crawler
+  languages:
+  - de
+  notes: Zürich Construction Appeals Court decisions.
+- id: zh_sozialversicherung
+  name: Zürich – Sozialversicherungsgericht
+  level: cantonal
+  canton: ZH
+  homepage: https://www.sozialversicherungsgericht.zh.ch/
+  start_urls:
+  - https://www.sozialversicherungsgericht.zh.ch/
+  connector: crawler
+  languages:
+  - de
+  notes: Zürich Social Insurance Court decisions.
+
+# Note: All sources are scraped directly from official court portals.
+# No third-party aggregator (entscheidsuche.ch) dependencies.
+# Each canton has a dedicated scraper in scripts/scrape_cantons.py.

@@ -1,0 +1,221 @@
+name: Daily Update
+
+on:
+  schedule:
+    # Run daily at 4 AM UTC (give courts time to publish)
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 'Number of days to scrape (default: 7)'
+        required: false
+        default: '7'
+        type: string
+      skip_hf_push:
+        description: 'Skip pushing to HuggingFace'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  HF_TOKEN: ${{ secrets.HF_TOKEN }}
+  HF_DATASET_REPO: ${{ secrets.HF_DATASET_REPO }}
+  DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/swisslaw
+  PYTHONPATH: ${{ github.workspace }}/backend
+  CASELAW_ROLLING_SINCE_DAYS: ${{ vars.CASELAW_ROLLING_SINCE_DAYS }}
+  LOG_LEVEL: INFO
+
+# Prevent concurrent runs of data update workflows
+concurrency:
+  group: data-update
+  cancel-in-progress: false
+
+jobs:
+  update-dataset:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: swisslaw
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      # ── Scraping & DB steps ──────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        working-directory: ./backend
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: |
+          pip install playwright
+          playwright install chromium --with-deps || echo "Playwright install failed, continuing without browser automation"
+
+      - name: Initialize database schema
+        working-directory: ./backend
+        run: alembic upgrade head
+
+      - name: Import existing data from HuggingFace
+        working-directory: ./backend
+        continue-on-error: true
+        run: |
+          echo "Attempting to import existing dataset from HuggingFace..."
+          python scripts/import_from_huggingface.py voilaj/swiss-caselaw || {
+            echo "::warning::Could not import from HuggingFace, starting fresh"
+          }
+
+      - name: Run incremental update
+        working-directory: ./backend
+        env:
+          DAYS: ${{ github.event.inputs.days || '7' }}
+        run: |
+          echo "Running incremental update for last $DAYS days..."
+          python scripts/daily_update.py --days $DAYS
+
+      - name: Generate statistics
+        id: stats
+        working-directory: ./backend
+        run: |
+          python -c "
+          import sys
+          import os
+          sys.path.insert(0, '.')
+          from sqlmodel import select, func
+          from app.db.session import get_session
+          from app.models.decision import Decision
+
+          with get_session() as session:
+              total = session.exec(select(func.count(Decision.id))).one()
+              federal = session.exec(
+                  select(func.count(Decision.id)).where(Decision.level == 'federal')
+              ).one()
+              cantonal = session.exec(
+                  select(func.count(Decision.id)).where(Decision.level == 'cantonal')
+              ).one()
+
+              canton_query = (
+                  select(Decision.canton, func.count(Decision.id))
+                  .where(Decision.canton.isnot(None))
+                  .group_by(Decision.canton)
+                  .order_by(func.count(Decision.id).desc())
+              )
+              cantons = session.exec(canton_query).all()
+
+              lang_query = (
+                  select(Decision.language, func.count(Decision.id))
+                  .where(Decision.language.isnot(None))
+                  .group_by(Decision.language)
+              )
+              langs = dict(session.exec(lang_query).all())
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f'total={total}\n')
+              f.write(f'federal={federal}\n')
+              f.write(f'cantonal={cantonal}\n')
+              f.write(f'cantons={len(cantons)}\n')
+              f.write(f'german={langs.get(\"de\", 0)}\n')
+              f.write(f'french={langs.get(\"fr\", 0)}\n')
+              f.write(f'italian={langs.get(\"it\", 0)}\n')
+
+          print(f'Total: {total}')
+          print(f'Federal: {federal}')
+          print(f'Cantonal: {cantonal}')
+          print(f'Cantons covered: {len(cantons)}')
+          "
+
+      - name: Push to HuggingFace
+        if: ${{ env.HF_TOKEN != '' && github.event.inputs.skip_hf_push != 'true' }}
+        working-directory: ./backend
+        run: |
+          echo "Pushing dataset to HuggingFace..."
+          python scripts/push_to_huggingface.py voilaj/swiss-caselaw
+
+      - name: Export SQLite database
+        working-directory: ./backend
+        run: |
+          echo "Exporting to SQLite..."
+          python scripts/export_sqlite.py ../data/swisslaw.db
+
+      - name: Push SQLite to HuggingFace
+        if: ${{ env.HF_TOKEN != '' && github.event.inputs.skip_hf_push != 'true' }}
+        working-directory: ./backend
+        run: |
+          echo "Pushing SQLite database to HuggingFace..."
+          python scripts/push_sqlite_to_huggingface.py --sqlite ../data/swisslaw.db --repo voilaj/swiss-caselaw-db
+
+      - name: Export decisions
+        working-directory: ./backend
+        run: python scripts/export_decisions.py ../data/exports/decisions.json.gz
+
+      - name: Upload export to HuggingFace
+        if: ${{ env.HF_TOKEN != '' && github.event.inputs.skip_hf_push != 'true' }}
+        run: |
+          huggingface-cli upload voilaj/swiss-caselaw data/exports/decisions.json.gz decisions.json.gz --repo-type dataset --token "$HF_TOKEN"
+
+      # ── Pipeline steps (formerly dispatched to caselaw-repo) ─────────
+      - name: Install pipeline deps
+        run: |
+          pip install -r pipeline/requirements.txt
+          pip install -e pipeline
+
+      - name: Build delta
+        run: |
+          DATE="$(date -u +%F)"
+          python -m caselaw_pipeline.cli build-delta --export data/exports/decisions.json.gz --out _build --date "$DATE" --parquet
+
+      - name: Publish delta
+        run: |
+          DATE="$(date -u +%F)"
+          python -m caselaw_pipeline.cli publish-delta --build-dir _build --date "$DATE" --parquet
+
+      - name: Upload SQLite artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: swisslaw-sqlite
+          path: data/swisslaw.db
+          retention-days: 7
+
+      - name: Write job summary
+        run: |
+          echo "## Daily Update Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Statistics" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|------:|" >> $GITHUB_STEP_SUMMARY
+          echo "| Total Decisions | ${{ steps.stats.outputs.total }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Federal Decisions | ${{ steps.stats.outputs.federal }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Cantonal Decisions | ${{ steps.stats.outputs.cantonal }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Cantons Covered | ${{ steps.stats.outputs.cantons }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Languages" >> $GITHUB_STEP_SUMMARY
+          echo "| Language | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|------:|" >> $GITHUB_STEP_SUMMARY
+          echo "| German | ${{ steps.stats.outputs.german }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| French | ${{ steps.stats.outputs.french }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Italian | ${{ steps.stats.outputs.italian }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Links" >> $GITHUB_STEP_SUMMARY
+          echo "- [HuggingFace Dataset](https://huggingface.co/datasets/voilaj/swiss-caselaw)" >> $GITHUB_STEP_SUMMARY
+          echo "- [HuggingFace Space](https://huggingface.co/spaces/voilaj/swiss-caselaw)" >> $GITHUB_STEP_SUMMARY

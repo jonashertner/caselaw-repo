@@ -1,0 +1,145 @@
+name: Sync Parquet to HuggingFace
+
+on:
+  schedule:
+    # Run daily at 3:00 UTC
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (no upload)'
+        required: false
+        default: 'false'
+        type: boolean
+      initial_export:
+        description: 'Run initial full export (partitioned by year)'
+        required: false
+        default: 'false'
+        type: boolean
+      upload_only:
+        description: 'Upload existing parquet files only (skip database export)'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/swisslaw
+  PYTHONPATH: ${{ github.workspace }}/backend
+  HF_DATASET_REPO: voilaj/swiss-caselaw-db
+
+# Prevent concurrent runs
+concurrency:
+  group: sync-parquet
+  cancel-in-progress: false
+
+jobs:
+  sync-parquet:
+    runs-on: [self-hosted, swiss-caselaw]
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        working-directory: ./backend
+        run: |
+          python3 -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyarrow huggingface_hub
+          echo "$PWD/.venv/bin" >> $GITHUB_PATH
+
+      # Upload-only mode: skip database steps and directly upload existing files
+      - name: Upload existing parquet files
+        if: ${{ inputs.upload_only == 'true' }}
+        working-directory: ./
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          source backend/.venv/bin/activate
+          echo "Uploading existing parquet files to HuggingFace..."
+
+          # Check if parquet files exist
+          if [ ! -d "parquet_export/data" ] || [ -z "$(ls -A parquet_export/data/*.parquet 2>/dev/null)" ]; then
+            echo "Error: No parquet files found in parquet_export/data/"
+            exit 1
+          fi
+
+          # Count files
+          FILE_COUNT=$(ls -1 parquet_export/data/*.parquet 2>/dev/null | wc -l)
+          echo "Found $FILE_COUNT parquet files"
+
+          if [ "${{ inputs.dry_run }}" == "true" ]; then
+            echo "[DRY RUN] Would upload $FILE_COUNT files to $HF_DATASET_REPO"
+            ls -lh parquet_export/data/*.parquet | head -20
+          else
+            echo "Uploading to $HF_DATASET_REPO..."
+            huggingface-cli upload $HF_DATASET_REPO parquet_export/data data --repo-type dataset
+          fi
+
+      # Database-based export steps (skip if upload_only)
+      - name: Generate database statistics
+        if: ${{ inputs.upload_only != 'true' }}
+        working-directory: ./backend
+        run: |
+          source .venv/bin/activate
+          python -c "
+          import sys
+          sys.path.insert(0, '.')
+          from sqlmodel import select, func
+          from app.db.session import get_session
+          from app.models.decision import Decision
+          with get_session() as session:
+              total = session.exec(select(func.count(Decision.id))).one()
+              federal = session.exec(select(func.count(Decision.id)).where(Decision.level == 'federal')).one()
+              cantonal = session.exec(select(func.count(Decision.id)).where(Decision.level == 'cantonal')).one()
+          print(f'=== DATABASE STATISTICS ===')
+          print(f'Total: {total:,}')
+          print(f'Federal: {federal:,}')
+          print(f'Cantonal: {cantonal:,}')
+          "
+
+      - name: Run initial full export
+        if: ${{ inputs.initial_export == 'true' && inputs.upload_only != 'true' }}
+        working-directory: ./backend
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          source .venv/bin/activate
+          echo "Running initial full export (partitioned by year)..."
+
+          if [ "${{ inputs.dry_run }}" == "true" ]; then
+            python scripts/export_initial_parquet.py --output-dir ../parquet_export
+          else
+            python scripts/export_initial_parquet.py --output-dir ../parquet_export --push --repo $HF_DATASET_REPO
+          fi
+
+      - name: Run incremental export
+        if: ${{ inputs.initial_export != 'true' && inputs.upload_only != 'true' }}
+        working-directory: ./backend
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          source .venv/bin/activate
+          echo "Running incremental parquet export..."
+
+          if [ "${{ inputs.dry_run }}" == "true" ]; then
+            python scripts/export_incremental_parquet.py --dry-run --repo $HF_DATASET_REPO
+          else
+            python scripts/export_incremental_parquet.py --repo $HF_DATASET_REPO
+          fi
+
+      - name: Write summary
+        run: |
+          echo "## Parquet Sync Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ inputs.upload_only }}" == "true" ]; then
+            echo "Uploaded existing parquet files to HuggingFace." >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ inputs.initial_export }}" == "true" ]; then
+            echo "Initial full export completed." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "Incremental parquet shard has been synced." >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Dataset: https://huggingface.co/datasets/$HF_DATASET_REPO" >> $GITHUB_STEP_SUMMARY

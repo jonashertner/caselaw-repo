@@ -1,0 +1,616 @@
+name: Historical Import
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: 'Source to import (federal, zh, cantonal-direct, cantonal-other, or leave empty for all)'
+        required: false
+        default: ''
+        type: string
+      skip_entscheidsuche:
+        description: 'Skip entscheidsuche.ch (700K+ records)'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/swisslaw
+  PYTHONPATH: ${{ github.workspace }}/backend
+
+jobs:
+  # First job: Import existing data from HuggingFace (shared baseline)
+  import-baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      baseline_count: ${{ steps.stats.outputs.total }}
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: swisslaw
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        working-directory: ./backend
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Initialize database schema
+        working-directory: ./backend
+        run: alembic upgrade head
+
+      - name: Import existing data from HuggingFace
+        working-directory: ./backend
+        continue-on-error: true
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          echo "Importing existing dataset from HuggingFace..."
+          python scripts/import_from_huggingface.py voilaj/swiss-caselaw || {
+            echo "::warning::Could not import from HuggingFace, starting fresh"
+          }
+
+      - name: Get baseline statistics
+        id: stats
+        working-directory: ./backend
+        run: |
+          python -c "
+          import sys
+          import os
+          sys.path.insert(0, '.')
+          from sqlmodel import select, func
+          from app.db.session import get_session
+          from app.models.decision import Decision
+          with get_session() as session:
+              total = session.exec(select(func.count(Decision.id))).one()
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f'total={total}\n')
+          print(f'Baseline: {total:,} decisions')
+          "
+
+      - name: Export baseline SQLite
+        working-directory: ./backend
+        run: python scripts/export_sqlite.py ../data/baseline.db
+
+      - name: Upload baseline artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: baseline-db
+          path: data/baseline.db
+          retention-days: 1
+
+  # Federal Courts Import (parallel job)
+  import-federal:
+    needs: import-baseline
+    if: ${{ inputs.source == '' || inputs.source == 'federal' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180  # 3 hours for federal courts
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: swisslaw
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        working-directory: ./backend
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: |
+          pip install playwright
+          playwright install chromium --with-deps || echo "Playwright install failed, continuing"
+
+      - name: Initialize database schema
+        working-directory: ./backend
+        run: alembic upgrade head
+
+      - name: Download baseline
+        uses: actions/download-artifact@v4
+        with:
+          name: baseline-db
+          path: data/
+
+      - name: Import baseline
+        working-directory: ./backend
+        run: python scripts/import_sqlite.py ../data/baseline.db
+
+      - name: Import Federal Courts
+        working-directory: ./backend
+        run: python scripts/full_import.py --source federal
+
+      - name: Export SQLite
+        working-directory: ./backend
+        run: python scripts/export_sqlite.py ../data/federal.db
+
+      - name: Upload federal artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: federal-db
+          path: data/federal.db
+          retention-days: 1
+
+  # Zürich Courts Import (parallel job)
+  import-zurich:
+    needs: import-baseline
+    if: ${{ inputs.source == '' || inputs.source == 'zh' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180  # 3 hours for Zürich courts
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: swisslaw
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        working-directory: ./backend
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: |
+          pip install playwright
+          playwright install chromium --with-deps || echo "Playwright install failed, continuing"
+
+      - name: Initialize database schema
+        working-directory: ./backend
+        run: alembic upgrade head
+
+      - name: Download baseline
+        uses: actions/download-artifact@v4
+        with:
+          name: baseline-db
+          path: data/
+
+      - name: Import baseline
+        working-directory: ./backend
+        run: python scripts/import_sqlite.py ../data/baseline.db
+
+      - name: Import Zürich Courts
+        working-directory: ./backend
+        run: |
+          echo "Importing Zürich Obergericht..."
+          python -c "
+          import sys
+          sys.path.insert(0, '.')
+          from scripts.scrape_zh_courts import scrape_zh_courts
+          count = scrape_zh_courts(from_date=None)
+          print(f'ZH Courts: {count} decisions')
+          "
+
+          echo "Importing Zürich Steuerrekurs..."
+          python -c "
+          import sys
+          sys.path.insert(0, '.')
+          from scripts.scrape_zh_steuerrekurs import scrape_zh_steuerrekurs
+          count = scrape_zh_steuerrekurs(from_date=None)
+          print(f'ZH Steuerrekurs: {count} decisions')
+          "
+
+          echo "Importing Zürich Baurekurs..."
+          python -c "
+          import sys
+          sys.path.insert(0, '.')
+          from scripts.scrape_zh_baurekurs import scrape_zh_baurekurs
+          count = scrape_zh_baurekurs(from_date=None)
+          print(f'ZH Baurekurs: {count} decisions')
+          "
+
+          echo "Importing Zürich Sozialversicherung..."
+          python -c "
+          import sys
+          sys.path.insert(0, '.')
+          from scripts.scrape_zh_sozialversicherung import scrape_zh_sozialversicherung
+          count = scrape_zh_sozialversicherung(from_date=None)
+          print(f'ZH Sozialversicherung: {count} decisions')
+          "
+
+      - name: Export SQLite
+        working-directory: ./backend
+        run: python scripts/export_sqlite.py ../data/zurich.db
+
+      - name: Upload zurich artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zurich-db
+          path: data/zurich.db
+          retention-days: 1
+
+  # Direct Cantonal Scrapers (GE, VD, TI) - parallel job
+  import-cantonal-direct:
+    needs: import-baseline
+    if: ${{ inputs.source == '' || inputs.source == 'cantonal-direct' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180  # 3 hours
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: swisslaw
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        working-directory: ./backend
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: |
+          pip install playwright
+          playwright install chromium --with-deps || echo "Playwright install failed, continuing"
+
+      - name: Initialize database schema
+        working-directory: ./backend
+        run: alembic upgrade head
+
+      - name: Download baseline
+        uses: actions/download-artifact@v4
+        with:
+          name: baseline-db
+          path: data/
+
+      - name: Import baseline
+        working-directory: ./backend
+        run: python scripts/import_sqlite.py ../data/baseline.db
+
+      - name: Import Geneva Courts
+        working-directory: ./backend
+        continue-on-error: true
+        run: |
+          python -c "
+          import sys
+          sys.path.insert(0, '.')
+          from scripts.scrape_ge_direct import scrape_ge_direct
+          count = scrape_ge_direct(from_date=None)
+          print(f'Geneva: {count} decisions')
+          "
+
+      - name: Import Vaud Courts
+        working-directory: ./backend
+        continue-on-error: true
+        run: |
+          python -c "
+          import sys
+          sys.path.insert(0, '.')
+          from scripts.scrape_vd import scrape_vd
+          count = scrape_vd(from_date=None)
+          print(f'Vaud: {count} decisions')
+          "
+
+      - name: Import Ticino Courts
+        working-directory: ./backend
+        continue-on-error: true
+        run: |
+          python -c "
+          import sys
+          sys.path.insert(0, '.')
+          from scripts.scrape_ti import scrape_ti
+          count = scrape_ti(from_date=None)
+          print(f'Ticino: {count} decisions')
+          "
+
+      - name: Export SQLite
+        working-directory: ./backend
+        run: python scripts/export_sqlite.py ../data/cantonal-direct.db
+
+      - name: Upload cantonal-direct artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cantonal-direct-db
+          path: data/cantonal-direct.db
+          retention-days: 1
+
+  # Other Cantons (via scrape_cantons.py) - parallel job
+  import-cantonal-other:
+    needs: import-baseline
+    if: ${{ inputs.source == '' || inputs.source == 'cantonal-other' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 300  # 5 hours for all other cantons
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: swisslaw
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        working-directory: ./backend
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: |
+          pip install playwright
+          playwright install chromium --with-deps || echo "Playwright install failed, continuing"
+
+      - name: Initialize database schema
+        working-directory: ./backend
+        run: alembic upgrade head
+
+      - name: Download baseline
+        uses: actions/download-artifact@v4
+        with:
+          name: baseline-db
+          path: data/
+
+      - name: Import baseline
+        working-directory: ./backend
+        run: python scripts/import_sqlite.py ../data/baseline.db
+
+      - name: Import Other Cantons
+        working-directory: ./backend
+        run: |
+          python -c "
+          import sys
+          sys.path.insert(0, '.')
+          from scripts.scrape_cantons import scrape_all_cantons
+          count = scrape_all_cantons(from_date=None)
+          print(f'Other Cantons: {count} decisions')
+          "
+
+      - name: Export SQLite
+        working-directory: ./backend
+        run: python scripts/export_sqlite.py ../data/cantonal-other.db
+
+      - name: Upload cantonal-other artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cantonal-other-db
+          path: data/cantonal-other.db
+          retention-days: 1
+
+  # Merge all results and push to HuggingFace
+  merge-and-push:
+    needs: [import-baseline, import-federal, import-zurich, import-cantonal-direct, import-cantonal-other]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: swisslaw
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        working-directory: ./backend
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Initialize database schema
+        working-directory: ./backend
+        run: alembic upgrade head
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: data/
+
+      - name: Merge all databases
+        working-directory: ./backend
+        run: |
+          echo "Merging all scraped data..."
+
+          # Import each SQLite in order (deduplication handled by content_hash)
+          for db in ../data/*/baseline.db ../data/*/federal.db ../data/*/zurich.db ../data/*/cantonal-direct.db ../data/*/cantonal-other.db; do
+            if [ -f "$db" ]; then
+              echo "Importing $db..."
+              python scripts/import_sqlite.py "$db" || echo "Failed to import $db"
+            fi
+          done
+
+      - name: Generate statistics
+        id: stats
+        working-directory: ./backend
+        run: |
+          python -c "
+          import sys
+          import os
+          sys.path.insert(0, '.')
+          from sqlmodel import select, func
+          from app.db.session import get_session
+          from app.models.decision import Decision
+
+          with get_session() as session:
+              total = session.exec(select(func.count(Decision.id))).one()
+              federal = session.exec(
+                  select(func.count(Decision.id)).where(Decision.level == 'federal')
+              ).one()
+              cantonal = session.exec(
+                  select(func.count(Decision.id)).where(Decision.level == 'cantonal')
+              ).one()
+              canton_query = (
+                  select(Decision.canton, func.count(Decision.id))
+                  .where(Decision.canton.isnot(None))
+                  .group_by(Decision.canton)
+              )
+              cantons = session.exec(canton_query).all()
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f'total={total}\n')
+              f.write(f'federal={federal}\n')
+              f.write(f'cantonal={cantonal}\n')
+              f.write(f'cantons={len(cantons)}\n')
+
+          print(f'Total: {total:,}')
+          print(f'Federal: {federal:,}')
+          print(f'Cantonal: {cantonal:,}')
+          print(f'Cantons covered: {len(cantons)}/26')
+          for canton, count in sorted(cantons, key=lambda x: -x[1])[:10]:
+              print(f'  {canton}: {count:,}')
+          "
+
+      - name: Push to HuggingFace
+        if: ${{ env.HF_TOKEN != '' }}
+        working-directory: ./backend
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          echo "Pushing dataset to HuggingFace..."
+          python scripts/push_to_huggingface.py voilaj/swiss-caselaw
+
+      - name: Export final SQLite
+        working-directory: ./backend
+        run: python scripts/export_sqlite.py ../data/swisslaw.db
+
+      - name: Upload final SQLite artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: swisslaw-sqlite-historical
+          path: data/swisslaw.db
+          retention-days: 30
+
+      - name: Write job summary
+        run: |
+          echo "## Historical Import Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Statistics" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|------:|" >> $GITHUB_STEP_SUMMARY
+          echo "| Baseline | ${{ needs.import-baseline.outputs.baseline_count }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Total Decisions | ${{ steps.stats.outputs.total }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Federal Decisions | ${{ steps.stats.outputs.federal }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Cantonal Decisions | ${{ steps.stats.outputs.cantonal }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Cantons Covered | ${{ steps.stats.outputs.cantons }}/26 |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Job Status" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Federal Courts | ${{ needs.import-federal.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Zürich Courts | ${{ needs.import-zurich.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Cantonal Direct (GE,VD,TI) | ${{ needs.import-cantonal-direct.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Cantonal Other | ${{ needs.import-cantonal-other.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Links" >> $GITHUB_STEP_SUMMARY
+          echo "- [HuggingFace Dataset](https://huggingface.co/datasets/voilaj/swiss-caselaw)" >> $GITHUB_STEP_SUMMARY
+          echo "- [HuggingFace Space](https://huggingface.co/spaces/voilaj/swiss-caselaw)" >> $GITHUB_STEP_SUMMARY

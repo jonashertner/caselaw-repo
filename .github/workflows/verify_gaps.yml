@@ -1,0 +1,84 @@
+name: Verify Data Gaps (entscheidsuche.ch)
+
+# This workflow runs weekly to check for any decisions missed by primary scrapers.
+# It uses entscheidsuche.ch as a verification source only (not primary data source).
+
+on:
+  schedule:
+    # Run weekly on Sunday at 6 AM UTC
+    - cron: '0 6 * * 0'
+  workflow_dispatch:
+    inputs:
+      canton:
+        description: 'Canton to verify (e.g., ZH, BE, or empty for all)'
+        required: false
+        default: ''
+      limit:
+        description: 'Max decisions to check per canton'
+        required: false
+        default: '1000'
+      dry_run:
+        description: 'Dry run (report only, no import)'
+        required: false
+        default: 'true'
+        type: boolean
+
+env:
+  DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/swisslaw
+  PYTHONPATH: ${{ github.workspace }}/backend
+
+# Prevent concurrent runs
+concurrency:
+  group: verify-gaps
+  cancel-in-progress: false
+
+jobs:
+  verify-gaps:
+    runs-on: [self-hosted, swiss-caselaw]
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        working-directory: ./backend
+        run: |
+          python3 -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          echo "$PWD/.venv/bin" >> $GITHUB_PATH
+
+      - name: Run gap verification
+        working-directory: ./backend
+        run: |
+          source .venv/bin/activate
+
+          CANTON_ARG=""
+          if [ -n "${{ github.event.inputs.canton }}" ]; then
+            CANTON_ARG="--canton ${{ github.event.inputs.canton }}"
+          fi
+
+          LIMIT_ARG="--limit ${{ github.event.inputs.limit || '1000' }}"
+
+          echo "=== Gap Verification Report ==="
+          echo "Checking entscheidsuche.ch for decisions not in our database..."
+          echo ""
+
+          if [ "${{ github.event.inputs.dry_run }}" == "true" ] || [ -z "${{ github.event.inputs.dry_run }}" ]; then
+            echo "[DRY RUN MODE - reporting only, no import]"
+            python scripts/import_entscheidsuche.py $CANTON_ARG $LIMIT_ARG --skip-federal --dry-run 2>&1 || true
+          else
+            echo "[IMPORT MODE - importing missing decisions]"
+            python scripts/import_entscheidsuche.py $CANTON_ARG $LIMIT_ARG --skip-federal 2>&1
+          fi
+
+      - name: Write summary
+        run: |
+          echo "## Gap Verification Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Source:** entscheidsuche.ch (verification only)" >> $GITHUB_STEP_SUMMARY
+          echo "**Canton:** ${{ github.event.inputs.canton || 'all' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Mode:** ${{ github.event.inputs.dry_run == 'false' && 'Import' || 'Dry run' }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Note: entscheidsuche.ch is used for gap verification only, not as a primary data source." >> $GITHUB_STEP_SUMMARY

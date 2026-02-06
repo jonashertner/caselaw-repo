@@ -1,0 +1,146 @@
+name: Deploy to HuggingFace Spaces
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - 'Dockerfile.spaces'
+      - 'README_spaces.md'
+  workflow_dispatch:  # Manual trigger
+
+env:
+  HF_SPACE: voilaj/swiss-caselaw
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install huggingface_hub
+        run: pip install huggingface_hub
+
+      - name: Deploy to HuggingFace Spaces
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          python << 'EOF'
+          import os
+          import shutil
+          import tempfile
+          from huggingface_hub import HfApi, create_repo
+
+          api = HfApi()
+          repo_id = os.environ["HF_SPACE"]
+          token = os.environ.get("HF_TOKEN")
+
+          if not token:
+              print("Error: HF_TOKEN secret not set")
+              exit(1)
+
+          # Create Space if it doesn't exist
+          try:
+              create_repo(
+                  repo_id=repo_id,
+                  repo_type="space",
+                  space_sdk="docker",
+                  exist_ok=True,
+                  token=token
+              )
+              print(f"Space {repo_id} ready")
+          except Exception as e:
+              print(f"Space creation: {e}")
+
+          # Prepare files in temp directory
+          temp_dir = tempfile.mkdtemp()
+          print(f"Preparing deployment in {temp_dir}")
+
+          # Copy Dockerfile
+          shutil.copy("Dockerfile.spaces", os.path.join(temp_dir, "Dockerfile"))
+
+          # Copy README
+          shutil.copy("README_spaces.md", os.path.join(temp_dir, "README.md"))
+
+          # Copy backend (excluding unnecessary files)
+          def ignore_backend(dir, files):
+              return [f for f in files if f in ['.venv', '__pycache__', '.pytest_cache', '.git', '*.pyc']]
+
+          shutil.copytree("backend/app", os.path.join(temp_dir, "backend/app"), ignore=ignore_backend)
+          shutil.copytree("backend/scripts", os.path.join(temp_dir, "backend/scripts"), ignore=ignore_backend)
+          shutil.copy("backend/requirements.txt", os.path.join(temp_dir, "backend/requirements.txt"))
+
+          # Copy frontend (excluding build artifacts)
+          def ignore_frontend(dir, files):
+              return [f for f in files if f in ['node_modules', '.next', '.git']]
+
+          shutil.copytree("frontend", os.path.join(temp_dir, "frontend"), ignore=ignore_frontend)
+
+          print("Uploading to HuggingFace Space...")
+
+          # Upload
+          api.upload_folder(
+              folder_path=temp_dir,
+              repo_id=repo_id,
+              repo_type="space",
+              token=token,
+              commit_message=f"Deploy from GitHub: {os.environ.get('GITHUB_SHA', 'manual')[:7]}"
+          )
+
+          print(f"\nDeployed to: https://huggingface.co/spaces/{repo_id}")
+
+          # Cleanup
+          shutil.rmtree(temp_dir)
+          EOF
+
+      - name: Wait for Space to be ready
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          python << 'EOF'
+          import os
+          import time
+          from huggingface_hub import HfApi
+
+          api = HfApi()
+          repo_id = os.environ["HF_SPACE"]
+
+          print(f"Waiting for Space to rebuild...")
+
+          for i in range(20):
+              try:
+                  space_info = api.space_info(repo_id)
+                  stage = space_info.runtime.stage if space_info.runtime else "UNKNOWN"
+                  print(f"[{i*30}s] Status: {stage}")
+
+                  if stage == "RUNNING":
+                      print("\n✓ Space is running!")
+                      break
+                  elif "ERROR" in stage:
+                      print(f"\n✗ Deployment failed: {stage}")
+                      exit(1)
+                  else:
+                      time.sleep(30)
+              except Exception as e:
+                  print(f"[{i*30}s] Checking... ({e})")
+                  time.sleep(30)
+          else:
+              print("\nWarning: Space still building after 10 minutes")
+          EOF
+
+      - name: Post deployment summary
+        run: |
+          echo "## Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Space URL:** https://huggingface.co/spaces/${{ env.HF_SPACE }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY

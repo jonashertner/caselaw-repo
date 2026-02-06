@@ -1,0 +1,23 @@
+{
+  "name": "Swiss Case Law AI",
+  "short_name": "Swiss Law",
+  "description": "Search 800k+ Swiss court decisions with AI-powered answers",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fafafa",
+  "theme_color": "#dc2626",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "lang": "de-CH",
+  "categories": ["legal", "education", "productivity"],
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "related_applications": [],
+  "prefer_related_applications": false
+}

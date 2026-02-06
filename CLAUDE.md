@@ -81,6 +81,8 @@ Appendix: Case Citations
 2. **Use `search_caselaw`** for comprehensive results (default: 500 results)
 3. **Fetch full text with `get_decision`** for leading cases you'll quote
 4. **Check `find_citing_decisions`** to see how precedents have been applied
+5. **Use `search_by_court`** to find decisions from a specific court (e.g., "BGer", "Obergericht ZH")
+6. **Use `list_cantons`** to see all cantons and their decision counts
 
 ### Quality Standards
 

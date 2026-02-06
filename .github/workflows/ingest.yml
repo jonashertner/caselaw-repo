@@ -1,0 +1,109 @@
+name: Ingest Court Decisions
+
+on:
+  # Disabled scheduled run - use daily-update.yml instead for scheduled updates
+  # schedule:
+  #   - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      source:
+        description: 'Source to ingest (or "all")'
+        required: false
+        default: 'all'
+
+env:
+  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+  HF_TOKEN: ${{ secrets.HF_TOKEN }}
+  HF_REPO_ID: ${{ vars.HF_REPO_ID || 'voilaj/swiss-caselaw' }}
+
+# Prevent concurrent runs of data update workflows
+concurrency:
+  group: data-update
+  cancel-in-progress: false
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    services:
+      db:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: swisslaw
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt
+
+      - name: Initialize database
+        run: |
+          cd backend
+          python -m app.cli db init
+        env:
+          DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/swisslaw
+
+      - name: Import existing data
+        run: |
+          if [ -f data/exports/decisions.json.gz ]; then
+            cd backend
+            python scripts/import_decisions.py ../data/exports/decisions.json.gz
+          fi
+        env:
+          DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/swisslaw
+
+      - name: Run ingestion
+        run: |
+          cd backend
+          python -m app.cli ingest run --source ${{ github.event.inputs.source || 'all' }}
+        env:
+          DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/swisslaw
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          INGEST_MAX_PAGES_PER_SOURCE: 500
+
+      - name: Export decisions
+        run: |
+          cd backend
+          python scripts/export_decisions.py ../data/exports/decisions.json.gz
+        env:
+          DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/swisslaw
+
+      - name: Push to Hugging Face
+        if: env.HF_TOKEN != ''
+        run: |
+          cd backend
+          python scripts/push_to_huggingface.py ${{ env.HF_REPO_ID }}
+        env:
+          DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/swisslaw
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/exports/
+          git diff --staged --quiet || git commit -m "Update decisions $(date +%Y-%m-%d)"
+          git push

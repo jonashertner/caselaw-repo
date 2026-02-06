@@ -9,7 +9,32 @@ build/
 .venv/
 .env
 
-# artifacts
+# Node / Next
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+npm-debug.log*
+
+# OS
+.DS_Store
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# Parquet data
+parquet_export/data/
+
+# Data (keep exports dir)
+/data/*
+!/data/exports/
+*.db
+
+# Artifacts
 _build/
 state/
 data_local/

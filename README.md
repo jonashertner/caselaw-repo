@@ -1,21 +1,46 @@
 # Swiss Caselaw
 
-Offline access to 843,000+ Swiss federal and cantonal court decisions. Search locally, completely private, no internet required after setup.
+Consolidated repository for scraping, indexing, and searching 843,000+ Swiss federal and cantonal court decisions.
 
-## Quick Start
+## Architecture
+
+```
+caselaw-repo/
+├── backend/          # Scrapers, FastAPI, ingestion (PostgreSQL)
+├── frontend/         # Next.js search UI
+├── pipeline/         # ETL: daily deltas, weekly snapshots (SQLite + HuggingFace)
+├── local_app/        # Offline local search app (SQLite)
+├── mcp_server/       # Claude Code MCP integration
+├── tests/            # Test suite
+├── docker-compose.yml
+└── Dockerfile.spaces # HuggingFace Spaces deployment
+```
+
+## Quick Start (Local Search)
 
 ```bash
-# 1. Clone and install
-git clone https://github.com/jonashertner/caselaw-repo.git
-cd caselaw-repo/local_app
+cd local_app
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e .
 
-# 2. Download database (~15 GB, one-time)
+# Download database (~15 GB, one-time)
 caselaw-local update
+
+# Start web UI
+caselaw-local serve
 ```
 
----
+Open **http://127.0.0.1:8787**
+
+## Quick Start (Full Stack)
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+- Backend API: http://localhost:8000
+- Frontend: http://localhost:3003
 
 ## Claude Code Integration
 
@@ -32,24 +57,6 @@ Add to `~/.claude/settings.json`:
 }
 ```
 
-Restart Claude Code. Then ask in natural language — German, French, Italian, or English:
-
-```
-Finde Entscheide betreffend Verfahrenseinstellung und Beschwerde der Privatklägerschaft
-```
-
-```
-Recherche les arrêts du Tribunal fédéral concernant la protection des données
-```
-
-```
-Trova decisioni del Tribunale federale sulla protezione dei dati
-```
-
-```
-Find decisions citing BGE 140 III 264
-```
-
 ### MCP Tools
 
 | Tool | Description |
@@ -57,54 +64,12 @@ Find decisions citing BGE 140 III 264
 | `search_caselaw` | Full-text search with filters (language, canton, date, court level) |
 | `get_decision` | Get complete text of a decision by ID |
 | `find_citing_decisions` | Find cases citing a specific reference (e.g., `BGE 140 III 264`) |
+| `analyze_search_results` | Aggregate analysis: breakdowns by year, canton, level, court |
 | `get_caselaw_statistics` | Database coverage and statistics |
+| `search_by_court` | Search decisions from a specific court |
+| `list_cantons` | List all cantons with decision counts |
 
-### Search Parameters
-
-| Parameter | Description |
-|-----------|-------------|
-| `query` | Search query (supports `AND`, `OR`, `NOT`, `"phrases"`, `field:value`, `prefix*`) |
-| `language` | `de`, `fr`, `it`, `rm` |
-| `canton` | `ZH`, `BE`, `GE`, `VD`, `TI`, etc. |
-| `level` | `federal` or `cantonal` |
-| `date_from` / `date_to` | Date range (YYYY-MM-DD) |
-| `limit` | Max results (default 20, max 100) |
-
-### Custom Database Path
-
-```json
-{
-  "mcpServers": {
-    "swiss-caselaw": {
-      "command": "python3",
-      "args": ["/path/to/mcp_server/server.py"],
-      "env": {
-        "CASELAW_DB_PATH": "/custom/path/caselaw.sqlite"
-      }
-    }
-  }
-}
-```
-
----
-
-## Web Interface
-
-```bash
-caselaw-local serve
-```
-
-Open **http://127.0.0.1:8787**
-
-**Features:**
-- Full-text search with Boolean operators
-- Filter by date, language, canton, court level
-- Export results to CSV
-- Save searches locally
-- Clickable citation links
-- Keyboard navigation (`/` to search, `j`/`k` to navigate)
-
----
+The MCP server supports both PostgreSQL (`DATABASE_URL`) and SQLite (`CASELAW_DB_PATH`) backends. Use `--huggingface` to auto-download from HuggingFace.
 
 ## Search Syntax
 
@@ -118,19 +83,7 @@ Open **http://127.0.0.1:8787**
 | `title:BGE` | Search title field |
 | `docket:6B_123` | Search docket number |
 
----
-
-## Database
-
-### Updates
-
-```bash
-caselaw-local update
-```
-
-New decisions added weekly.
-
-### Coverage
+## Database Coverage
 
 | Metric | Value |
 |--------|-------|
@@ -140,45 +93,32 @@ New decisions added weekly.
 | Cantonal courts | 469,458 |
 | Languages | DE (55%), FR (35%), IT (10%) |
 
-### Location
-
-The database is stored at:
-- macOS: `~/Library/Application Support/swiss-caselaw/caselaw.sqlite`
-- Linux: `~/.local/share/swiss-caselaw/caselaw.sqlite`
-
-### Sources
-
-All decisions are scraped directly from official court portals using dedicated scrapers:
-
-**Federal courts:**
-- Bundesgericht (BGer)
-- Bundesverwaltungsgericht (BVGer)
-- Bundesstrafgericht (BStGer)
-- Bundespatentgericht (BPatGer)
-
-**Cantonal courts:**
-Dedicated scraper for each of the 26 cantons, pulling directly from official cantonal court websites. Checking for gaps against entscheidsuche.ch.
-
-### Automated Updates
-
-Updates run via GitHub Actions:
+## Automated Updates
 
 | Schedule | Action |
 |----------|--------|
-| **Daily** (02:15 UTC) | Scrape new decisions, build delta, publish to HuggingFace |
+| **Daily** (04:00 UTC) | Scrape new decisions, export, build delta, publish to HuggingFace |
 | **Weekly** (Sunday 03:30 UTC) | Consolidate deltas into new snapshot |
+| **Weekly** (Sunday 05:00 UTC) | Gap verification via entscheidsuche.ch |
 
-Run `caselaw-local update` to download the latest snapshot.
+## Development
 
----
+```bash
+make venv-backend    # Backend virtualenv
+make venv-pipeline   # Pipeline virtualenv
+make venv-local      # Local app virtualenv
+make dev             # Docker compose up --build
+make test            # Run tests
+make lint            # Ruff check
+make fmt             # Ruff format
+```
 
-## Requirements
+## Sources
 
-- Python 3.10+
-- 20 GB disk space
-- macOS, Linux, or Windows
+All decisions scraped directly from official court portals:
 
----
+**Federal:** BGer, BVGer, BStGer, BPatGer
+**Cantonal:** Dedicated scrapers for all 26 cantons, with gap checking against entscheidsuche.ch
 
 ## License
 

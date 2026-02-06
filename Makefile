@@ -1,12 +1,15 @@
 # Common tasks
 
-.PHONY: venv-pipeline venv-local build-delta publish-delta build-snapshot publish-snapshot serve update
+.PHONY: venv-pipeline venv-local venv-backend build-delta publish-delta build-snapshot publish-snapshot serve update dev up down lint fmt test
 
 venv-pipeline:
 	cd pipeline && python -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
 
 venv-local:
 	cd local_app && python -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
+
+venv-backend:
+	cd backend && python -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
 
 # These assume you already have data/exports/decisions.json.gz from your scrapers.
 build-delta:
@@ -29,3 +32,22 @@ update:
 
 serve:
 	python -m caselaw_local.cli serve
+
+# Backend / Docker targets
+dev:
+	docker compose up --build
+
+up:
+	docker compose up -d --build
+
+down:
+	docker compose down
+
+lint:
+	cd backend && ruff check .
+
+fmt:
+	cd backend && ruff format . && ruff check . --fix
+
+test:
+	python -m pytest tests/ -q

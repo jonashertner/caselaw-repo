@@ -1,0 +1,179 @@
+name: Weekly Entscheidsuche Gap Fill
+
+on:
+  schedule:
+    # Run weekly on Sunday at 5 AM UTC (after verify-gaps at 6 AM, before daily at 4 AM Monday)
+    - cron: '0 5 * * 0'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (count only, no imports)'
+        required: false
+        default: false
+        type: boolean
+      canton:
+        description: 'Specific canton to import (e.g., ZH, GE). Leave empty for all.'
+        required: false
+        default: ''
+        type: string
+
+env:
+  HF_TOKEN: ${{ secrets.HF_TOKEN }}
+  DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/swisslaw
+  PYTHONPATH: ${{ github.workspace }}/backend
+
+# Prevent concurrent runs of data update workflows
+concurrency:
+  group: data-update
+  cancel-in-progress: false
+
+jobs:
+  entscheidsuche-import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240  # 4 hour timeout for full import
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: swisslaw
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        working-directory: ./backend
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Initialize database schema
+        working-directory: ./backend
+        run: |
+          alembic upgrade head
+
+      - name: Import existing data from HuggingFace
+        working-directory: ./backend
+        run: |
+          echo "Importing existing dataset from HuggingFace..."
+          python scripts/import_from_huggingface.py voilaj/swiss-caselaw
+
+      - name: Get pre-import count
+        id: pre_count
+        working-directory: ./backend
+        run: |
+          python -c "
+          import sys
+          import os
+          sys.path.insert(0, '.')
+          from sqlmodel import select, func
+          from app.db.session import get_session
+          from app.models.decision import Decision
+          with get_session() as session:
+              total = session.exec(select(func.count(Decision.id))).one()
+          print(f'Pre-import count: {total}')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f'count={total}\n')
+          "
+
+      - name: Run entscheidsuche import
+        working-directory: ./backend
+        env:
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+          CANTON: ${{ github.event.inputs.canton || '' }}
+        run: |
+          echo "Running entscheidsuche.ch import..."
+
+          ARGS=""
+          if [ "$DRY_RUN" = "true" ]; then
+            ARGS="$ARGS --dry-run"
+          fi
+          if [ -n "$CANTON" ]; then
+            ARGS="$ARGS --canton $CANTON"
+          fi
+
+          python scripts/import_entscheidsuche_robust.py $ARGS
+
+      - name: Get post-import count
+        id: post_count
+        working-directory: ./backend
+        run: |
+          python -c "
+          import sys
+          import os
+          sys.path.insert(0, '.')
+          from sqlmodel import select, func
+          from app.db.session import get_session
+          from app.models.decision import Decision
+          with get_session() as session:
+              total = session.exec(select(func.count(Decision.id))).one()
+          print(f'Post-import count: {total}')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f'count={total}\n')
+          "
+
+      - name: Calculate new decisions
+        id: new_decisions
+        run: |
+          PRE=${{ steps.pre_count.outputs.count }}
+          POST=${{ steps.post_count.outputs.count }}
+          NEW=$((POST - PRE))
+          echo "New decisions imported: $NEW"
+          echo "new=$NEW" >> $GITHUB_OUTPUT
+
+      - name: Push to HuggingFace (Parquet)
+        if: ${{ env.HF_TOKEN != '' && steps.new_decisions.outputs.new != '0' && github.event.inputs.dry_run != 'true' }}
+        working-directory: ./backend
+        run: |
+          echo "Pushing updated dataset to HuggingFace..."
+          python scripts/push_to_huggingface.py voilaj/swiss-caselaw
+
+      - name: Export and push SQLite
+        if: ${{ env.HF_TOKEN != '' && steps.new_decisions.outputs.new != '0' && github.event.inputs.dry_run != 'true' }}
+        working-directory: ./backend
+        run: |
+          echo "Exporting to SQLite..."
+          python scripts/export_sqlite.py ../data/swisslaw.db
+
+          echo "Pushing SQLite to HuggingFace..."
+          python scripts/push_sqlite_to_huggingface.py --sqlite ../data/swisslaw.db --repo voilaj/swiss-caselaw-db
+
+      - name: Write job summary
+        run: |
+          echo "## Weekly Entscheidsuche Import Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Results" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|------:|" >> $GITHUB_STEP_SUMMARY
+          echo "| Pre-import Total | ${{ steps.pre_count.outputs.count }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Post-import Total | ${{ steps.post_count.outputs.count }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **New Decisions** | **${{ steps.new_decisions.outputs.new }}** |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            echo "⚠️ This was a dry run - no data was imported." >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ steps.new_decisions.outputs.new }}" = "0" ]; then
+            echo "✅ No new decisions found - database is up to date." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "✅ New decisions imported and pushed to HuggingFace." >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Links" >> $GITHUB_STEP_SUMMARY
+          echo "- [HuggingFace Dataset](https://huggingface.co/datasets/voilaj/swiss-caselaw)" >> $GITHUB_STEP_SUMMARY
+          echo "- [SQLite Database](https://huggingface.co/datasets/voilaj/swiss-caselaw-db)" >> $GITHUB_STEP_SUMMARY

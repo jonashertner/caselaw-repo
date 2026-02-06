@@ -1,4 +1,4 @@
-"""Tests for MCP server request handling."""
+"""Tests for the merged MCP server (FastMCP-based, 7 tools)."""
 from __future__ import annotations
 
 import json
@@ -9,8 +9,7 @@ import pytest
 from conftest import SAMPLE_DECISIONS, _insert_decisions
 from caselaw_local.db import ensure_schema
 
-# We import the server module and patch get_db_connection to use our test DB.
-import mcp_server.server as mcp
+import mcp_server.server as mcp_mod
 
 
 def _make_test_db() -> sqlite3.Connection:
@@ -24,195 +23,142 @@ def _make_test_db() -> sqlite3.Connection:
 
 @pytest.fixture(autouse=True)
 def _patch_mcp_db():
-    """Patch get_db_connection to return a shared in-memory DB for all MCP tests."""
+    """Patch get_db to return a shared in-memory SQLite DB for all MCP tests."""
     conn = _make_test_db()
-    with patch.object(mcp, "get_db_connection", return_value=conn):
+    with patch.object(mcp_mod, "_db_conn", conn), \
+         patch.object(mcp_mod, "_db_type", "sqlite"), \
+         patch.object(mcp_mod, "_sqlite_schema", "pipeline"):
         yield
     conn.close()
 
 
 # ---------------------------------------------------------------------------
-# initialize
-# ---------------------------------------------------------------------------
-
-class TestInitialize:
-    def test_returns_protocol_version(self):
-        resp = mcp.handle_request({"method": "initialize", "id": 1})
-        assert resp["result"]["protocolVersion"] == "2024-11-05"
-
-    def test_returns_capabilities(self):
-        resp = mcp.handle_request({"method": "initialize", "id": 1})
-        assert "tools" in resp["result"]["capabilities"]
-
-    def test_returns_server_info(self):
-        resp = mcp.handle_request({"method": "initialize", "id": 1})
-        assert resp["result"]["serverInfo"]["name"] == "swiss-caselaw"
-
-
-# ---------------------------------------------------------------------------
-# tools/list
-# ---------------------------------------------------------------------------
-
-class TestToolsList:
-    def test_returns_all_tools(self):
-        resp = mcp.handle_request({"method": "tools/list", "id": 2})
-        tools = resp["result"]["tools"]
-        names = {t["name"] for t in tools}
-        assert names == {
-            "search_caselaw",
-            "get_decision",
-            "get_caselaw_statistics",
-            "find_citing_decisions",
-            "analyze_search_results",
-        }
-
-    def test_returns_five_tools(self):
-        resp = mcp.handle_request({"method": "tools/list", "id": 2})
-        assert len(resp["result"]["tools"]) == 5
-
-
-# ---------------------------------------------------------------------------
-# tools/call – search_caselaw
+# search_caselaw
 # ---------------------------------------------------------------------------
 
 class TestSearchCaselaw:
-    def test_returns_results(self):
-        resp = mcp.handle_request({
-            "method": "tools/call",
-            "id": 3,
-            "params": {"name": "search_caselaw", "arguments": {"query": "Datenschutz"}},
-        })
-        content = json.loads(resp["result"]["content"][0]["text"])
-        assert content["total"] > 0
+    def test_fts_returns_results(self):
+        result = json.loads(mcp_mod.search_caselaw(query="Datenschutz"))
+        assert result["total"] > 0
+        assert result["count"] > 0
 
     def test_browse_mode(self):
-        resp = mcp.handle_request({
-            "method": "tools/call",
-            "id": 4,
-            "params": {"name": "search_caselaw", "arguments": {"query": "", "language": "de"}},
-        })
-        content = json.loads(resp["result"]["content"][0]["text"])
-        assert content["total"] >= 1
+        result = json.loads(mcp_mod.search_caselaw(query="", language="de"))
+        assert result["total"] >= 1
 
-    def test_with_canton_filter(self):
-        resp = mcp.handle_request({
-            "method": "tools/call",
-            "id": 5,
-            "params": {"name": "search_caselaw", "arguments": {"query": "", "canton": "ZH"}},
-        })
-        content = json.loads(resp["result"]["content"][0]["text"])
-        assert content["total"] >= 1
+    def test_canton_filter(self):
+        result = json.loads(mcp_mod.search_caselaw(query="", canton="ZH"))
+        assert result["total"] >= 1
+        for r in result["results"]:
+            assert r["canton"] == "ZH"
+
+    def test_level_filter(self):
+        result = json.loads(mcp_mod.search_caselaw(query="", level="federal"))
+        assert result["total"] >= 1
+        for r in result["results"]:
+            assert r["level"] == "federal"
+
+    def test_limit_capped_at_500(self):
+        result = json.loads(mcp_mod.search_caselaw(query="", limit=9999))
+        assert result["count"] <= 500
 
 
 # ---------------------------------------------------------------------------
-# tools/call – get_decision
+# get_decision
 # ---------------------------------------------------------------------------
 
 class TestGetDecision:
     def test_found(self):
-        resp = mcp.handle_request({
-            "method": "tools/call",
-            "id": 6,
-            "params": {"name": "get_decision", "arguments": {"decision_id": "bge-140-iii-264"}},
-        })
-        content = json.loads(resp["result"]["content"][0]["text"])
-        assert content["id"] == "bge-140-iii-264"
+        result = json.loads(mcp_mod.get_decision(decision_id="bge-140-iii-264"))
+        assert result["id"] == "bge-140-iii-264"
+        assert "content_text" in result
 
     def test_not_found(self):
-        resp = mcp.handle_request({
-            "method": "tools/call",
-            "id": 7,
-            "params": {"name": "get_decision", "arguments": {"decision_id": "nonexistent"}},
-        })
-        content = json.loads(resp["result"]["content"][0]["text"])
-        assert "error" in content
+        result = json.loads(mcp_mod.get_decision(decision_id="nonexistent"))
+        assert "error" in result
 
 
 # ---------------------------------------------------------------------------
-# tools/call – get_caselaw_statistics
+# get_caselaw_statistics
 # ---------------------------------------------------------------------------
 
 class TestGetStatistics:
     def test_returns_stats(self):
-        resp = mcp.handle_request({
-            "method": "tools/call",
-            "id": 8,
-            "params": {"name": "get_caselaw_statistics", "arguments": {}},
-        })
-        content = json.loads(resp["result"]["content"][0]["text"])
-        assert content["total_decisions"] == 5
-        assert "date_range" in content
+        result = json.loads(mcp_mod.get_caselaw_statistics())
+        assert result["total_decisions"] == 5
+        assert "date_range" in result
+        assert "by_level" in result
+        assert "by_language" in result
+        assert "top_cantons" in result
 
 
 # ---------------------------------------------------------------------------
-# tools/call – find_citing_decisions
+# find_citing_decisions
 # ---------------------------------------------------------------------------
 
 class TestFindCitingDecisions:
     def test_returns_citing(self):
-        resp = mcp.handle_request({
-            "method": "tools/call",
-            "id": 9,
-            "params": {"name": "find_citing_decisions", "arguments": {"citation": "BGE 140 III 264"}},
-        })
-        content = json.loads(resp["result"]["content"][0]["text"])
-        assert content["citation"] == "BGE 140 III 264"
-        # Our sample data includes this citation in content
-        assert content["count"] >= 1
+        result = json.loads(mcp_mod.find_citing_decisions(citation="BGE 140 III 264"))
+        assert result["citation"] == "BGE 140 III 264"
+        assert result["count"] >= 1
+
+    def test_limit_respected(self):
+        result = json.loads(mcp_mod.find_citing_decisions(citation="BGE 140 III 264", limit=1))
+        assert result["count"] <= 1
 
 
 # ---------------------------------------------------------------------------
-# tools/call – analyze_search_results
+# analyze_search_results
 # ---------------------------------------------------------------------------
 
 class TestAnalyzeSearchResults:
     def test_returns_analysis_structure(self):
-        resp = mcp.handle_request({
-            "method": "tools/call",
-            "id": 10,
-            "params": {"name": "analyze_search_results", "arguments": {"query": "Kündigung"}},
-        })
-        content = json.loads(resp["result"]["content"][0]["text"])
-        assert "total_results" in content
-        assert "analysis" in content
-        assert "key_decisions" in content
-        assert "by_year" in content["analysis"]
-        assert "by_canton" in content["analysis"]
+        result = json.loads(mcp_mod.analyze_search_results(query="Kündigung"))
+        assert "total_results" in result
+        assert "analysis" in result
+        assert "key_decisions" in result
+        assert "by_year" in result["analysis"]
+        assert "by_canton" in result["analysis"]
+        assert "by_level" in result["analysis"]
+        assert "by_language" in result["analysis"]
+        assert "by_court" in result["analysis"]
+
+    def test_with_filters(self):
+        result = json.loads(mcp_mod.analyze_search_results(query="Kündigung", language="de"))
+        assert result["total_results"] >= 1
 
 
 # ---------------------------------------------------------------------------
-# Error cases
+# search_by_court
 # ---------------------------------------------------------------------------
 
-class TestErrorCases:
-    def test_unknown_tool(self):
-        resp = mcp.handle_request({
-            "method": "tools/call",
-            "id": 11,
-            "params": {"name": "nonexistent_tool", "arguments": {}},
-        })
-        assert "error" in resp
-        assert resp["error"]["code"] == -32601
+class TestSearchByCourt:
+    def test_finds_bundesgericht(self):
+        result = json.loads(mcp_mod.search_by_court(court="Bundesgericht"))
+        assert result["count"] >= 1
+        assert result["court_query"] == "Bundesgericht"
 
-    def test_unknown_method(self):
-        resp = mcp.handle_request({
-            "method": "unknown/method",
-            "id": 12,
-        })
-        assert "error" in resp
-        assert resp["error"]["code"] == -32601
+    def test_with_year_filter(self):
+        result = json.loads(mcp_mod.search_by_court(court="Bundesgericht", year=2024))
+        for d in result["decisions"]:
+            assert d["decision_date"].startswith("2024")
 
-    def test_notification_returns_none(self):
-        resp = mcp.handle_request({"method": "notifications/initialized"})
-        assert resp is None
+    def test_limit_capped(self):
+        result = json.loads(mcp_mod.search_by_court(court="Bundesgericht", limit=9999))
+        assert result["count"] <= 100
 
-    def test_exception_returns_iserror(self):
-        """When a tool raises, the response should include isError."""
-        with patch.object(mcp, "search_caselaw", side_effect=RuntimeError("boom")):
-            resp = mcp.handle_request({
-                "method": "tools/call",
-                "id": 13,
-                "params": {"name": "search_caselaw", "arguments": {"query": "test"}},
-            })
-            assert resp["result"]["isError"] is True
-            assert "Error" in resp["result"]["content"][0]["text"]
+
+# ---------------------------------------------------------------------------
+# list_cantons
+# ---------------------------------------------------------------------------
+
+class TestListCantons:
+    def test_returns_all_26_cantons(self):
+        result = json.loads(mcp_mod.list_cantons())
+        assert len(result["cantons"]) == 26
+
+    def test_counts_are_present(self):
+        result = json.loads(mcp_mod.list_cantons())
+        zh = next(c for c in result["cantons"] if c["code"] == "ZH")
+        assert zh["decisions"] >= 1
+        assert "total_cantonal_decisions" in result

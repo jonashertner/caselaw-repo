@@ -1,9 +1,14 @@
 name: caselaw-daily-delta
 
 on:
+  repository_dispatch:
+    types: [new-export]
   workflow_dispatch:
-  schedule:
-    - cron: "15 2 * * *"  # daily 02:15 UTC
+    inputs:
+      export_url:
+        description: "URL to decisions.json.gz export file"
+        required: true
+        type: string
 
 jobs:
   daily:
@@ -29,9 +34,15 @@ jobs:
           pip install -r pipeline/requirements.txt
           pip install -e pipeline
 
-      - name: Scrape + export (customize if needed)
+      - name: Download export
         run: |
-          bash scripts/run_scrapers_and_export.sh
+          EXPORT_URL="${{ inputs.export_url || github.event.client_payload.export_url }}"
+          if [ -z "$EXPORT_URL" ]; then
+            echo "::error::No export_url provided. Supply it via workflow_dispatch input or repository_dispatch client_payload."
+            exit 1
+          fi
+          mkdir -p data/exports
+          curl -fSL --retry 3 --retry-delay 5 -o data/exports/decisions.json.gz "$EXPORT_URL"
 
       - name: Build delta
         run: |

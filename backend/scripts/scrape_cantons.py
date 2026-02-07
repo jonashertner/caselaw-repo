@@ -1053,6 +1053,7 @@ def scrape_lu_crawler(limit: int | None = None, from_date: date | None = None, t
                             session.commit()
 
                     except Exception:
+                        session.rollback()
                         skipped += 1
 
                 elif ("lgve" in href.lower() or "recht_sprechung" in href.lower()) and full_url not in visited:
@@ -1061,7 +1062,10 @@ def scrape_lu_crawler(limit: int | None = None, from_date: date | None = None, t
 
             time.sleep(0.5)
 
-        session.commit()
+        try:
+            session.commit()
+        except Exception:
+            session.rollback()
 
     print(f"\nImported {imported} decisions from Luzern")
     print(f"Skipped {skipped}")
@@ -1274,6 +1278,7 @@ def scrape_sz_crawler(limit: int | None = None, from_date: date | None = None, t
                             session.commit()
 
                     except Exception:
+                        session.rollback()
                         skipped += 1
 
                 elif "rechtsprechung" in href.lower() and full_url not in visited:
@@ -1282,7 +1287,10 @@ def scrape_sz_crawler(limit: int | None = None, from_date: date | None = None, t
 
             time.sleep(0.5)
 
-        session.commit()
+        try:
+            session.commit()
+        except Exception:
+            session.rollback()
 
     print(f"\nImported {imported} decisions from Schwyz")
     print(f"Skipped {skipped}")
@@ -1663,6 +1671,7 @@ def scrape_ag_crawler(limit: int | None = None, from_date: date | None = None, t
                             session.commit()
 
                     except Exception:
+                        session.rollback()
                         skipped += 1
 
                 elif ("agve" in href.lower() or "entscheide" in href.lower()) and full_url not in visited and full_url.startswith(base_url):
@@ -1671,7 +1680,10 @@ def scrape_ag_crawler(limit: int | None = None, from_date: date | None = None, t
 
             time.sleep(0.5)
 
-        session.commit()
+        try:
+            session.commit()
+        except Exception:
+            session.rollback()
 
     print(f"\nImported {imported} decisions from Aargau")
     print(f"Skipped {skipped}")
@@ -2818,6 +2830,7 @@ def scrape_zg_crawler(limit: int | None = None, from_date: date | None = None, t
                             session.commit()
 
                     except Exception as e:
+                        session.rollback()
                         print(f"    Error: {e}")
                         stats.add_error()
 
@@ -2827,7 +2840,10 @@ def scrape_zg_crawler(limit: int | None = None, from_date: date | None = None, t
 
             time.sleep(0.5)
 
-        session.commit()
+        try:
+            session.commit()
+        except Exception:
+            session.rollback()
 
     print(stats.summary("Zug"))
     return stats.imported
@@ -3745,6 +3761,7 @@ def scrape_ge_crawler(limit: int | None = None, from_date: date | None = None, t
                             session.commit()
 
                     except Exception:
+                        session.rollback()
                         stats.add_error()
 
                 # Follow links to find more decisions
@@ -3755,7 +3772,10 @@ def scrape_ge_crawler(limit: int | None = None, from_date: date | None = None, t
 
             time.sleep(0.5)
 
-        session.commit()
+        try:
+            session.commit()
+        except Exception:
+            session.rollback()
 
     print(stats.summary("Geneva"))
     return stats.imported

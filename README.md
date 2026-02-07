@@ -12,8 +12,7 @@ caselaw-repo/
 ├── local_app/        # Offline local search app (SQLite)
 ├── mcp_server/       # Claude Code MCP integration
 ├── tests/            # Test suite
-├── docker-compose.yml
-└── Dockerfile.spaces # HuggingFace Spaces deployment
+└── docker-compose.yml
 ```
 
 ## Quick Start (Local Search)

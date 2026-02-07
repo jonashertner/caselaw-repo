@@ -163,7 +163,7 @@ jobs:
         working-directory: ./backend
         run: |
           echo "Pushing SQLite database to HuggingFace..."
-          python scripts/push_sqlite_to_huggingface.py --sqlite ../data/swisslaw.db --repo voilaj/swiss-caselaw-db
+          python scripts/push_sqlite_to_huggingface.py --sqlite ../data/swisslaw.db --repo voilaj/swiss-caselaw
 
       - name: Export decisions
         working-directory: ./backend

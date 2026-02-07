@@ -94,7 +94,7 @@ def _download_from_huggingface() -> Optional[str]:
         from huggingface_hub import hf_hub_download
         print("Downloading database from HuggingFace...", file=sys.stderr)
         path = hf_hub_download(
-            repo_id="voilaj/swiss-caselaw-db",
+            repo_id="voilaj/swiss-caselaw",
             filename="swisslaw.db",
             repo_type="dataset",
         )

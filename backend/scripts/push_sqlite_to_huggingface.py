@@ -2,13 +2,13 @@
 """Push SQLite database to HuggingFace for Spaces deployment.
 
 This exports the PostgreSQL database to SQLite, compresses it with zstd,
-and uploads it to the voilaj/swiss-caselaw-db dataset.
+and uploads it to the voilaj/swiss-caselaw dataset.
 
 Usage:
     python scripts/push_sqlite_to_huggingface.py [--repo REPO_ID]
 
 Example:
-    python scripts/push_sqlite_to_huggingface.py --repo voilaj/swiss-caselaw-db
+    python scripts/push_sqlite_to_huggingface.py --repo voilaj/swiss-caselaw
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from huggingface_hub import HfApi
 
 def push_sqlite_to_huggingface(
     sqlite_path: str | None = None,
-    repo_id: str = "voilaj/swiss-caselaw-db",
+    repo_id: str = "voilaj/swiss-caselaw",
 ) -> None:
     """Export SQLite and push to HuggingFace.
 
@@ -98,7 +98,7 @@ def push_sqlite_to_huggingface(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Push SQLite database to HuggingFace")
     parser.add_argument("--sqlite", help="Path to existing SQLite database (optional)")
-    parser.add_argument("--repo", default="voilaj/swiss-caselaw-db", help="HuggingFace repo ID")
+    parser.add_argument("--repo", default="voilaj/swiss-caselaw", help="HuggingFace repo ID")
     args = parser.parse_args()
 
     push_sqlite_to_huggingface(sqlite_path=args.sqlite, repo_id=args.repo)

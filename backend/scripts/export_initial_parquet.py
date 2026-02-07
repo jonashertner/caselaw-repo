@@ -265,7 +265,7 @@ def main():
     )
     parser.add_argument(
         "--repo",
-        default="voilaj/swiss-caselaw-db",
+        default="voilaj/swiss-caselaw",
         help="HuggingFace repo ID",
     )
     args = parser.parse_args()

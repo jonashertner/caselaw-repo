@@ -20,7 +20,7 @@ import duckdb
 logger = logging.getLogger(__name__)
 
 # HuggingFace dataset configuration
-HF_REPO_ID = os.environ.get("HF_DATASET_REPO", "voilaj/swiss-caselaw-db")
+HF_REPO_ID = os.environ.get("HF_DATASET_REPO", "voilaj/swiss-caselaw")
 CACHE_DIR = Path(os.environ.get("PARQUET_CACHE_DIR", "/tmp/parquet_cache"))
 
 

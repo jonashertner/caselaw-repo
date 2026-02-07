@@ -8,7 +8,7 @@ Usage:
     python scripts/export_incremental_parquet.py [--repo REPO_ID] [--dry-run]
 
 Example:
-    python scripts/export_incremental_parquet.py --repo voilaj/swiss-caselaw-db
+    python scripts/export_incremental_parquet.py --repo voilaj/swiss-caselaw
 """
 from __future__ import annotations
 
@@ -163,7 +163,7 @@ def get_new_decisions(
 
 
 def export_incremental_parquet(
-    repo_id: str = "voilaj/swiss-caselaw-db",
+    repo_id: str = "voilaj/swiss-caselaw",
     dry_run: bool = False,
 ) -> None:
     """Export incremental parquet shard and push to HuggingFace.
@@ -290,7 +290,7 @@ def export_incremental_parquet(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Export incremental parquet shards to HuggingFace")
-    parser.add_argument("--repo", default="voilaj/swiss-caselaw-db", help="HuggingFace repo ID")
+    parser.add_argument("--repo", default="voilaj/swiss-caselaw", help="HuggingFace repo ID")
     parser.add_argument("--dry-run", action="store_true", help="Test export without uploading")
     args = parser.parse_args()
     

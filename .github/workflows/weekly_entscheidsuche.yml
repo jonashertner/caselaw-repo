@@ -153,7 +153,7 @@ jobs:
           python scripts/export_sqlite.py ../data/swisslaw.db
 
           echo "Pushing SQLite to HuggingFace..."
-          python scripts/push_sqlite_to_huggingface.py --sqlite ../data/swisslaw.db --repo voilaj/swiss-caselaw-db
+          python scripts/push_sqlite_to_huggingface.py --sqlite ../data/swisslaw.db --repo voilaj/swiss-caselaw
 
       - name: Write job summary
         run: |
@@ -176,4 +176,3 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Links" >> $GITHUB_STEP_SUMMARY
           echo "- [HuggingFace Dataset](https://huggingface.co/datasets/voilaj/swiss-caselaw)" >> $GITHUB_STEP_SUMMARY
-          echo "- [SQLite Database](https://huggingface.co/datasets/voilaj/swiss-caselaw-db)" >> $GITHUB_STEP_SUMMARY

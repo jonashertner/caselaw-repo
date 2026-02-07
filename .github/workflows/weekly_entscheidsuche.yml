@@ -138,22 +138,8 @@ jobs:
           echo "New decisions imported: $NEW"
           echo "new=$NEW" >> $GITHUB_OUTPUT
 
-      - name: Push to HuggingFace (Parquet)
-        if: ${{ env.HF_TOKEN != '' && steps.new_decisions.outputs.new != '0' && github.event.inputs.dry_run != 'true' }}
-        working-directory: ./backend
-        run: |
-          echo "Pushing updated dataset to HuggingFace..."
-          python scripts/push_to_huggingface.py voilaj/swiss-caselaw
-
-      - name: Export and push SQLite
-        if: ${{ env.HF_TOKEN != '' && steps.new_decisions.outputs.new != '0' && github.event.inputs.dry_run != 'true' }}
-        working-directory: ./backend
-        run: |
-          echo "Exporting to SQLite..."
-          python scripts/export_sqlite.py ../data/swisslaw.db
-
-          echo "Pushing SQLite to HuggingFace..."
-          python scripts/push_sqlite_to_huggingface.py --sqlite ../data/swisslaw.db --repo voilaj/swiss-caselaw
+      # NOTE: Full dataset pushes (parquet, SQLite) are done locally,
+      # not from CI, because CI starts from an empty DB each run.
 
       - name: Write job summary
         run: |

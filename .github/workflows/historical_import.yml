@@ -570,14 +570,8 @@ jobs:
               print(f'  {canton}: {count:,}')
           "
 
-      - name: Push to HuggingFace
-        if: ${{ env.HF_TOKEN != '' }}
-        working-directory: ./backend
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: |
-          echo "Pushing dataset to HuggingFace..."
-          python scripts/push_to_huggingface.py voilaj/swiss-caselaw
+      # NOTE: Full dataset push removed — CI DB is incomplete.
+      # Use local push_to_huggingface.py for full dataset updates.
 
       - name: Export final SQLite
         working-directory: ./backend

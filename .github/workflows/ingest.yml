@@ -91,14 +91,8 @@ jobs:
         env:
           DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/swisslaw
 
-      - name: Push to Hugging Face
-        if: env.HF_TOKEN != ''
-        run: |
-          cd backend
-          python scripts/push_to_huggingface.py ${{ env.HF_REPO_ID }}
-        env:
-          DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/swisslaw
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      # NOTE: Full dataset push removed — CI DB is incomplete.
+      # Use local push_to_huggingface.py for full dataset updates.
 
       - name: Commit and push
         run: |

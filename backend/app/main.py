@@ -22,32 +22,12 @@ settings = get_settings()
 configure_logging()
 logger = logging.getLogger(__name__)
 
-# Use appropriate search implementation based on database type and environment
-import os
-
 def _is_sqlite() -> bool:
     return settings.database_url.startswith("sqlite")
 
-def _use_parquet() -> bool:
-    val = os.environ.get("USE_PARQUET_SEARCH", "").lower().strip()
-    return val in ("1", "true", "yes")
+_SQLITE_MODE = _is_sqlite()
 
-# Determine search backend and log it
-_PARQUET_MODE = _use_parquet()
-_SQLITE_MODE = _is_sqlite() if not _PARQUET_MODE else False
-
-if _PARQUET_MODE:
-    logger.info("Search backend: PARQUET (USE_PARQUET_SEARCH=%s)", os.environ.get("USE_PARQUET_SEARCH", ""))
-    try:
-        from app.services.search_parquet import search_parquet, SearchFilters, get_parquet_search_service, SearchResult
-        # Wrapper to match the SQLite/Postgres search signature - returns SearchResult
-        def search(session, query, *, filters, limit=20, offset=0, api_key=None):
-            return search_parquet(query, filters=filters, limit=limit, offset=offset)
-        logger.info("Parquet search module loaded successfully")
-    except Exception as e:
-        logger.error("Failed to load parquet search module: %s", e, exc_info=True)
-        raise
-elif _SQLITE_MODE:
+if _SQLITE_MODE:
     logger.info("Search backend: SQLITE (database_url=%s)", settings.database_url[:50])
     from app.services.search_sqlite import search_sqlite as search, SearchFilters
 else:
@@ -70,216 +50,14 @@ def db_session() -> Session:
         yield s
 
 
-
 @app.on_event("startup")
 def _startup() -> None:
-    # Skip DB init in parquet mode (no database needed)
-    if not _use_parquet():
-        init_db()
+    init_db()
 
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "search_backend": "parquet" if _use_parquet() else ("sqlite" if _is_sqlite() else "postgres")}
-
-
-@app.get("/api/parquet/stats")
-def parquet_stats() -> dict:
-    """Return parquet dataset statistics (only available in parquet mode)."""
-    import traceback
-    if not _use_parquet():
-        return {"error": "Parquet search not enabled", "enabled": False}
-
-    try:
-        service = get_parquet_search_service()
-        stats = service.get_statistics()
-        return {"enabled": True, **stats}
-    except Exception as e:
-        logger.error("Parquet stats error: %s", e, exc_info=True)
-        return {"enabled": True, "error": str(e), "traceback": traceback.format_exc()}
-
-
-@app.get("/api/debug/parquet-init")
-def debug_parquet_init() -> dict:
-    """Test parquet service initialization with detailed error reporting."""
-    import traceback
-    import glob
-    import re
-
-    result = {"step": "start"}
-
-    try:
-        result["step"] = "get_env"
-        parquet_dir = os.environ.get("PARQUET_CACHE_DIR", "/tmp/parquet_cache")
-        result["parquet_dir"] = parquet_dir
-
-        result["step"] = "list_files"
-        all_files = glob.glob(f"{parquet_dir}/data/*.parquet")
-        result["all_files_count"] = len(all_files)
-
-        result["step"] = "filter_files"
-        year_pattern = re.compile(r'decisions-(\d{4})\.parquet$')
-        recent_files = []
-        for f in all_files:
-            match = year_pattern.search(f)
-            if match:
-                year = int(match.group(1))
-                if year >= 2020:
-                    recent_files.append(f)
-        result["filtered_files_count"] = len(recent_files)
-        result["filtered_files"] = recent_files[:5]
-
-        if not recent_files:
-            result["error"] = "No files found for years >= 2020"
-            return result
-
-        result["step"] = "import_service"
-        from app.services.search_parquet import get_parquet_search_service
-        result["import_ok"] = True
-
-        result["step"] = "get_service"
-        service = get_parquet_search_service()
-        result["service_ok"] = True
-
-        result["step"] = "initialize"
-        service.initialize()
-        result["init_ok"] = True
-
-        result["step"] = "test_query"
-        conn = service._get_connection()
-        test_result = conn.execute("SELECT COUNT(*) FROM decisions").fetchone()
-        result["count"] = test_result[0] if test_result else 0
-
-        result["step"] = "get_statistics"
-        stats = service.get_statistics()
-        result["stats_total"] = stats.get("total", 0)
-        result["stats_keys"] = list(stats.keys())
-
-        result["step"] = "test_search"
-        from app.services.search_parquet import search_parquet, SearchFilters as PqFilters
-        search_result = search_parquet("BGE", filters=PqFilters(), limit=3)
-        result["search_hits"] = len(search_result.hits)
-        if search_result.hits:
-            result["first_hit_id"] = search_result.hits[0].decision.id
-
-        result["step"] = "done"
-        result["success"] = True
-
-    except Exception as e:
-        result["error"] = str(e)
-        result["traceback"] = traceback.format_exc()
-
-    return result
-
-
-@app.get("/api/debug/env")
-def debug_env() -> dict:
-    """Simple diagnostic endpoint - no parquet required."""
-    import glob
-    import traceback
-    parquet_dir = os.environ.get("PARQUET_CACHE_DIR", "/tmp/parquet_cache")
-    parquet_files = glob.glob(f"{parquet_dir}/data/*.parquet")
-
-    result = {
-        "parquet_mode": _PARQUET_MODE,
-        "use_parquet_env": os.environ.get("USE_PARQUET_SEARCH", "NOT_SET"),
-        "parquet_cache_dir": parquet_dir,
-        "parquet_files_found": len(parquet_files),
-        "parquet_files_sample": parquet_files[:5] if parquet_files else [],
-    }
-
-    # Try to read one parquet file directly with DuckDB
-    if parquet_files:
-        try:
-            import duckdb
-            conn = duckdb.connect(":memory:")
-            test_file = parquet_files[0]
-            row = conn.execute(f"SELECT * FROM read_parquet('{test_file}') LIMIT 1").fetchone()
-            result["duckdb_test"] = "OK"
-            result["duckdb_sample_columns"] = len(row) if row else 0
-
-            # Try creating VIEW from first 5 files
-            first_5 = parquet_files[:5]
-            paths_list = ", ".join(f"'{p}'" for p in first_5)
-            conn.execute(f"CREATE VIEW test_view AS SELECT * FROM read_parquet([{paths_list}], union_by_name=true)")
-            count_result = conn.execute("SELECT COUNT(*) FROM test_view").fetchone()
-            result["view_5_files_count"] = count_result[0] if count_result else 0
-
-            conn.close()
-        except Exception as e:
-            result["duckdb_test"] = "FAILED"
-            result["duckdb_error"] = str(e)
-            result["duckdb_traceback"] = traceback.format_exc()
-
-    return result
-
-
-@app.get("/api/debug/search-test")
-def debug_search_test(q: str = "test") -> dict:
-    """Diagnostic endpoint to test search and return detailed error info."""
-    import traceback
-
-    result = {
-        "parquet_mode": _PARQUET_MODE,
-        "sqlite_mode": _SQLITE_MODE,
-        "use_parquet_env": os.environ.get("USE_PARQUET_SEARCH", "NOT_SET"),
-        "database_url_prefix": settings.database_url[:30] if settings.database_url else "NOT_SET",
-    }
-
-    # Test parquet service initialization
-    try:
-        from app.services.search_parquet import get_parquet_search_service, SearchFilters as PqFilters, search_parquet
-
-        result["parquet_import"] = "OK"
-
-        service = get_parquet_search_service()
-        service.initialize()
-        result["parquet_initialized"] = True
-
-        # Get schema info
-        conn = service._get_connection()
-        schema_result = conn.execute("DESCRIBE decisions").fetchall()
-        result["parquet_columns"] = [row[0] for row in schema_result]
-
-        # Get row count
-        count_result = conn.execute("SELECT COUNT(*) FROM decisions").fetchone()
-        result["parquet_total_rows"] = count_result[0] if count_result else 0
-
-    except Exception as e:
-        result["parquet_init_error"] = str(e)
-        result["parquet_init_traceback"] = traceback.format_exc()
-
-    # Test search
-    try:
-        filters = PqFilters()
-        search_result = search_parquet(q, filters=filters, limit=3)
-        result["search_status"] = "OK"
-        result["search_total"] = search_result.total
-        result["search_hits"] = len(search_result.hits)
-        if search_result.hits:
-            result["first_hit_id"] = search_result.hits[0].decision.id
-            result["first_hit_title"] = search_result.hits[0].decision.title[:100] if search_result.hits[0].decision.title else None
-    except Exception as e:
-        result["search_status"] = "ERROR"
-        result["search_error"] = str(e)
-        result["search_traceback"] = traceback.format_exc()
-
-    return result
-
-
-@app.post("/api/parquet/refresh")
-def parquet_refresh() -> dict:
-    """Refresh parquet data from HuggingFace (only available in parquet mode)."""
-    if not _use_parquet():
-        return {"error": "Parquet search not enabled", "refreshed": False}
-    
-    try:
-        service = get_parquet_search_service()
-        service.refresh()
-        stats = service.get_statistics()
-        return {"refreshed": True, "total": stats.get("total", 0)}
-    except Exception as e:
-        return {"refreshed": False, "error": str(e)}
+    return {"status": "ok", "search_backend": "sqlite" if _is_sqlite() else "postgres"}
 
 
 @app.get("/api/sources")
@@ -316,22 +94,13 @@ def api_search(
     )
 
     try:
-        logger.info("Search request: query=%r, parquet_mode=%s", req.query[:100] if req.query else "", _PARQUET_MODE)
+        logger.info("Search request: query=%r", req.query[:100] if req.query else "")
         result = search(session, req.query, filters=filters, limit=req.limit, offset=req.offset, api_key=x_openai_key)
     except Exception as e:
-        logger.error("Search failed (parquet_mode=%s): %s", _PARQUET_MODE, e, exc_info=True)
+        logger.error("Search failed: %s", e, exc_info=True)
         raise
 
-    # Handle both SearchResult (parquet) and list (SQLite/Postgres) return types
-    if hasattr(result, 'hits'):
-        # SearchResult from parquet
-        hits = result.hits
-        total = result.total
-    else:
-        # List from SQLite/Postgres
-        hits = result
-        total = None
-
+    hits = result
     out_hits: list[SearchHitSchema] = []
     for h in hits:
         out_hits.append(
@@ -343,19 +112,11 @@ def api_search(
                 chunk_index=getattr(h, 'chunk_index', None),
             )
         )
-    return SearchResponse(hits=out_hits, total=total, offset=req.offset, limit=req.limit)
+    return SearchResponse(hits=out_hits, total=None, offset=req.offset, limit=req.limit)
 
 
 @app.get("/api/decisions/{decision_id}")
 def get_decision(decision_id: str, session: Session = Depends(db_session)) -> dict:
-    # In parquet mode, fetch from parquet
-    if _use_parquet():
-        service = get_parquet_search_service()
-        dec = service.get_decision_by_id(decision_id)
-        if not dec:
-            return {"error": "not_found"}
-        return dec
-
     dec = session.exec(select(Decision).where(Decision.id == decision_id)).first()
     if not dec:
         return {"error": "not_found"}
@@ -382,40 +143,6 @@ def get_decision(decision_id: str, session: Session = Depends(db_session)) -> di
 @app.get("/api/stats")
 def api_stats(session: Session = Depends(db_session)) -> dict:
     """Return comprehensive ingestion statistics."""
-    # In parquet mode, return parquet stats
-    if _use_parquet():
-        try:
-            service = get_parquet_search_service()
-            stats = service.get_statistics()
-            by_level = stats.get("by_level", {})
-            by_canton = stats.get("by_canton", {})
-            by_lang = stats.get("by_language", {})
-            by_year = stats.get("by_year", {})
-            recent = stats.get("recent", {})
-            total = stats.get("total", 0)
-            source_count = stats.get("source_count", 0)
-            return {
-                "total_decisions": total,
-                "federal_decisions": by_level.get("federal", 0),
-                "cantonal_decisions": by_level.get("cantonal", 0),
-                "decisions_by_canton": by_canton,
-                "decisions_by_year": by_year,
-                "decisions_by_language": by_lang,
-                "recent_decisions": {
-                    "last_24h": recent.get("last_24h", 0),
-                    "last_7d": recent.get("last_7d", 0),
-                    "last_30d": recent.get("last_30d", 0),
-                },
-                "coverage": {
-                    "total_sources": source_count,
-                    "indexed_sources": source_count,
-                    "cantons_covered": len(by_canton),
-                },
-                "sources": [],
-            }
-        except Exception as e:
-            return {"error": str(e), "total_decisions": 0}
-    
     import datetime as dt
     from sqlalchemy import text
 
@@ -477,12 +204,6 @@ def api_stats(session: Session = Depends(db_session)) -> dict:
     counts_by_language = {row[0]: row[1] for row in lang_result}
 
     # Recent ingestion counts
-    now = dt.datetime.now(dt.timezone.utc)
-    day_ago = now - dt.timedelta(days=1)
-    week_ago = now - dt.timedelta(days=7)
-    month_ago = now - dt.timedelta(days=30)
-
-    # Get recent counts using indexed_at if available, else approximate from decision_date
     recent_24h = session.exec(
         select(func.count(Decision.id)).where(
             Decision.decision_date >= (dt.date.today() - dt.timedelta(days=1))
@@ -616,7 +337,7 @@ def api_stats_detailed(
         "court": "COALESCE(court, source_name)",
     }.get(group_by, "source_id")
 
-    # Query: group × year matrix (database-specific SQL)
+    # Query: group x year matrix (database-specific SQL)
     if is_sqlite:
         sql = text(f"""
             SELECT
@@ -853,115 +574,6 @@ def api_ingestion_runs(
         return {"runs": [], "error": str(e)}
 
 
-@app.get("/api/citations/{decision_id}")
-def get_decision_citations(decision_id: str) -> dict:
-    """Extract citations from a decision (BGE/ATF references, docket numbers)."""
-    if not _use_parquet():
-        return {"error": "Citation extraction only available in parquet mode"}
-
-    service = get_parquet_search_service()
-    return service.get_citations_for_decision(decision_id)
-
-
-@app.get("/api/citing/{reference:path}")
-def find_citing_decisions(
-    reference: str,
-    limit: int = 50,
-    offset: int = 0,
-) -> dict:
-    """Find decisions that cite a given reference (BGE, docket, etc).
-
-    Example: /api/citing/BGE%20144%20III%2093 or /api/citing/5A_123/2024
-    """
-    if not _use_parquet():
-        return {"error": "Citation search only available in parquet mode"}
-
-    service = get_parquet_search_service()
-    result = service.find_citing_decisions(reference, limit=limit, offset=offset)
-    return {
-        "reference": reference,
-        "total": result.total,
-        "offset": result.offset,
-        "limit": result.limit,
-        "has_more": result.has_more,
-        "citing_decisions": [
-            {
-                **h.decision.model_dump(),
-                "score": h.score,
-                "snippet": h.snippet,
-            }
-            for h in result.hits
-        ],
-    }
-
-
-@app.get("/api/bulk/decisions")
-def bulk_decisions(
-    limit: int = 1000,
-    offset: int = 0,
-    canton: Optional[str] = None,
-    level: Optional[str] = None,
-    language: Optional[str] = None,
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None,
-    fields: Optional[str] = None,
-) -> dict:
-    """Bulk export of decisions for research purposes.
-
-    Args:
-        limit: Max results (up to 10000)
-        offset: Pagination offset
-        canton: Filter by canton
-        level: Filter by level (federal/cantonal)
-        language: Filter by language
-        date_from: Filter by date (YYYY-MM-DD)
-        date_to: Filter by date (YYYY-MM-DD)
-        fields: Comma-separated list of fields to include
-
-    Returns:
-        JSON with decisions array and pagination info
-    """
-    if not _use_parquet():
-        return {"error": "Bulk export only available in parquet mode"}
-
-    import datetime as dt
-
-    # Parse date filters
-    date_from_parsed = None
-    date_to_parsed = None
-    if date_from:
-        try:
-            date_from_parsed = dt.date.fromisoformat(date_from)
-        except ValueError:
-            return {"error": f"Invalid date_from format: {date_from}. Use YYYY-MM-DD."}
-    if date_to:
-        try:
-            date_to_parsed = dt.date.fromisoformat(date_to)
-        except ValueError:
-            return {"error": f"Invalid date_to format: {date_to}. Use YYYY-MM-DD."}
-
-    # Parse fields
-    field_list = None
-    if fields:
-        field_list = [f.strip() for f in fields.split(",")]
-
-    filters = SearchFilters(
-        canton=canton,
-        level=level,
-        language=language,
-        date_from=date_from_parsed,
-        date_to=date_to_parsed,
-    )
-
-    service = get_parquet_search_service()
-    return service.get_bulk_decisions(
-        filters=filters,
-        limit=min(limit, 10000),
-        offset=offset,
-        fields=field_list,
-    )
-
-
 @app.post("/api/answer", response_model=AnswerResponse)
 def api_answer(
     req: AnswerRequest,
@@ -977,10 +589,10 @@ def api_answer(
         date_to=req.date_to,
     )
     try:
-        logger.info("Answer request: query=%r, parquet_mode=%s", req.query[:100] if req.query else "", _PARQUET_MODE)
+        logger.info("Answer request: query=%r", req.query[:100] if req.query else "")
         result = answer_question(session, req.query, filters=filters, api_key=x_openai_key)
     except Exception as e:
-        logger.error("Answer failed (parquet_mode=%s): %s", _PARQUET_MODE, e, exc_info=True)
+        logger.error("Answer failed: %s", e, exc_info=True)
         raise
 
     return AnswerResponse(

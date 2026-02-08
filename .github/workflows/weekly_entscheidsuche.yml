@@ -19,6 +19,7 @@ on:
 
 env:
   HF_TOKEN: ${{ secrets.HF_TOKEN }}
+  HF_DATASET_REPO: ${{ secrets.HF_DATASET_REPO }}
   DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/swisslaw
   PYTHONPATH: ${{ github.workspace }}/backend
 
@@ -30,7 +31,7 @@ concurrency:
 jobs:
   entscheidsuche-import:
     runs-on: ubuntu-latest
-    timeout-minutes: 240  # 4 hour timeout for full import
+    timeout-minutes: 120
 
     services:
       postgres:
@@ -69,29 +70,8 @@ jobs:
         run: |
           alembic upgrade head
 
-      - name: Import existing data from HuggingFace
-        working-directory: ./backend
-        run: |
-          echo "Importing existing dataset from HuggingFace..."
-          python scripts/import_from_huggingface.py voilaj/swiss-caselaw
-
-      - name: Get pre-import count
-        id: pre_count
-        working-directory: ./backend
-        run: |
-          python -c "
-          import sys
-          import os
-          sys.path.insert(0, '.')
-          from sqlmodel import select, func
-          from app.db.session import get_session
-          from app.models.decision import Decision
-          with get_session() as session:
-              total = session.exec(select(func.count(Decision.id))).one()
-          print(f'Pre-import count: {total}')
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-              f.write(f'count={total}\n')
-          "
+      # NOTE: No HF import — CI imports from entscheidsuche.ch directly.
+      # Results are published as deltas to HuggingFace.
 
       - name: Run entscheidsuche import
         working-directory: ./backend
@@ -111,54 +91,58 @@ jobs:
 
           python scripts/import_entscheidsuche_robust.py $ARGS
 
-      - name: Get post-import count
-        id: post_count
+      - name: Get decision count
+        id: stats
         working-directory: ./backend
         run: |
           python -c "
-          import sys
-          import os
+          import sys, os
           sys.path.insert(0, '.')
           from sqlmodel import select, func
           from app.db.session import get_session
           from app.models.decision import Decision
           with get_session() as session:
               total = session.exec(select(func.count(Decision.id))).one()
-          print(f'Post-import count: {total}')
+          print(f'Decisions imported: {total}')
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-              f.write(f'count={total}\n')
+              f.write(f'total={total}\n')
           "
 
-      - name: Calculate new decisions
-        id: new_decisions
-        run: |
-          PRE=${{ steps.pre_count.outputs.count }}
-          POST=${{ steps.post_count.outputs.count }}
-          NEW=$((POST - PRE))
-          echo "New decisions imported: $NEW"
-          echo "new=$NEW" >> $GITHUB_OUTPUT
+      - name: Export decisions
+        if: github.event.inputs.dry_run != 'true'
+        working-directory: ./backend
+        run: python scripts/export_decisions.py ../data/exports/decisions.json.gz
 
-      # NOTE: Full dataset pushes (parquet, SQLite) are done locally,
-      # not from CI, because CI starts from an empty DB each run.
+      - name: Install pipeline deps
+        if: github.event.inputs.dry_run != 'true'
+        run: |
+          pip install -r pipeline/requirements.txt
+          pip install -e pipeline
+
+      - name: Build delta
+        if: github.event.inputs.dry_run != 'true'
+        run: |
+          DATE="$(date -u +%F)"
+          python -m caselaw_pipeline.cli build-delta --export data/exports/decisions.json.gz --out _build --date "$DATE" --parquet
+
+      - name: Publish delta
+        if: github.event.inputs.dry_run != 'true'
+        run: |
+          DATE="$(date -u +%F)"
+          python -m caselaw_pipeline.cli publish-delta --build-dir _build --date "$DATE" --parquet
 
       - name: Write job summary
         run: |
           echo "## Weekly Entscheidsuche Import Complete" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Results" >> $GITHUB_STEP_SUMMARY
           echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
           echo "|--------|------:|" >> $GITHUB_STEP_SUMMARY
-          echo "| Pre-import Total | ${{ steps.pre_count.outputs.count }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Post-import Total | ${{ steps.post_count.outputs.count }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **New Decisions** | **${{ steps.new_decisions.outputs.new }}** |" >> $GITHUB_STEP_SUMMARY
+          echo "| Decisions Imported | ${{ steps.stats.outputs.total }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
-            echo "⚠️ This was a dry run - no data was imported." >> $GITHUB_STEP_SUMMARY
-          elif [ "${{ steps.new_decisions.outputs.new }}" = "0" ]; then
-            echo "✅ No new decisions found - database is up to date." >> $GITHUB_STEP_SUMMARY
+            echo "This was a dry run - no data was published." >> $GITHUB_STEP_SUMMARY
           else
-            echo "✅ New decisions imported and pushed to HuggingFace." >> $GITHUB_STEP_SUMMARY
+            echo "Delta published to HuggingFace." >> $GITHUB_STEP_SUMMARY
           fi
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Links" >> $GITHUB_STEP_SUMMARY
           echo "- [HuggingFace Dataset](https://huggingface.co/datasets/voilaj/swiss-caselaw)" >> $GITHUB_STEP_SUMMARY

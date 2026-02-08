@@ -11,18 +11,12 @@ on:
         required: false
         default: '7'
         type: string
-      skip_hf_push:
-        description: 'Skip pushing to HuggingFace'
-        required: false
-        default: false
-        type: boolean
 
 env:
   HF_TOKEN: ${{ secrets.HF_TOKEN }}
   HF_DATASET_REPO: ${{ secrets.HF_DATASET_REPO }}
   DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/swisslaw
   PYTHONPATH: ${{ github.workspace }}/backend
-  CASELAW_ROLLING_SINCE_DAYS: ${{ vars.CASELAW_ROLLING_SINCE_DAYS }}
   LOG_LEVEL: INFO
 
 # Prevent concurrent runs of data update workflows
@@ -33,7 +27,7 @@ concurrency:
 jobs:
   update-dataset:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 120
 
     services:
       postgres:
@@ -77,14 +71,8 @@ jobs:
         working-directory: ./backend
         run: alembic upgrade head
 
-      - name: Import existing data from HuggingFace
-        working-directory: ./backend
-        continue-on-error: true
-        run: |
-          echo "Attempting to import existing dataset from HuggingFace..."
-          python scripts/import_from_huggingface.py voilaj/swiss-caselaw || {
-            echo "::warning::Could not import from HuggingFace, starting fresh"
-          }
+      # NOTE: No HF import — CI scrapes only new decisions (last N days).
+      # Full dataset lives on HuggingFace; deltas are published incrementally.
 
       - name: Run incremental update
         working-directory: ./backend
@@ -145,12 +133,6 @@ jobs:
           print(f'Cantons covered: {len(cantons)}')
           "
 
-      - name: Export SQLite database
-        working-directory: ./backend
-        run: |
-          echo "Exporting to SQLite..."
-          python scripts/export_sqlite.py ../data/swisslaw.db
-
       - name: Export decisions
         working-directory: ./backend
         run: python scripts/export_decisions.py ../data/exports/decisions.json.gz
@@ -173,31 +155,17 @@ jobs:
           DATE="$(date -u +%F)"
           python -m caselaw_pipeline.cli publish-delta --build-dir _build --date "$DATE" --parquet
 
-      - name: Upload SQLite artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: swisslaw-sqlite
-          path: data/swisslaw.db
-          retention-days: 7
-
       - name: Write job summary
         run: |
           echo "## Daily Update Complete" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Statistics" >> $GITHUB_STEP_SUMMARY
+          echo "### New Decisions Scraped (delta)" >> $GITHUB_STEP_SUMMARY
           echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
           echo "|--------|------:|" >> $GITHUB_STEP_SUMMARY
-          echo "| Total Decisions | ${{ steps.stats.outputs.total }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Federal Decisions | ${{ steps.stats.outputs.federal }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Cantonal Decisions | ${{ steps.stats.outputs.cantonal }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Cantons Covered | ${{ steps.stats.outputs.cantons }} |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Languages" >> $GITHUB_STEP_SUMMARY
-          echo "| Language | Count |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|------:|" >> $GITHUB_STEP_SUMMARY
-          echo "| German | ${{ steps.stats.outputs.german }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| French | ${{ steps.stats.outputs.french }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Italian | ${{ steps.stats.outputs.italian }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Decisions Scraped | ${{ steps.stats.outputs.total }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Federal | ${{ steps.stats.outputs.federal }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Cantonal | ${{ steps.stats.outputs.cantonal }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Cantons | ${{ steps.stats.outputs.cantons }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Links" >> $GITHUB_STEP_SUMMARY
           echo "- [HuggingFace Dataset](https://huggingface.co/datasets/voilaj/swiss-caselaw)" >> $GITHUB_STEP_SUMMARY

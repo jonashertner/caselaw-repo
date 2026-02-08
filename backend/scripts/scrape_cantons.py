@@ -3648,7 +3648,7 @@ def scrape_ge_crawler(limit: int | None = None, from_date: date | None = None, t
     # Geneva uses a modern web app - we need to target the PDF archive URLs directly
     # The decisions are organized by court and year
     min_year = from_date.year if from_date else None
-    max_pages = 200 if from_date else 5000
+    max_pages = 50 if from_date else 5000
     stats = ScraperStats()
     visited = set()
 
@@ -3764,8 +3764,8 @@ def scrape_ge_crawler(limit: int | None = None, from_date: date | None = None, t
                         session.rollback()
                         stats.add_error()
 
-                # Follow links to find more decisions
-                elif any(kw in href.lower() for kw in ["jurisprudence", "justice", "decision", "arret", "jugement"]):
+                # Follow links to find more decisions (only jurisprudence paths)
+                elif any(kw in href.lower() for kw in ["jurisprudence", "arret", "jugement"]):
                     if full_url not in visited and (full_url.startswith(base_url) or "ge.ch" in full_url):
                         if not min_year or not _url_year(full_url) or _url_year(full_url) >= min_year:
                             to_visit.append(full_url)
@@ -3786,8 +3786,10 @@ def scrape_ge_crawler(limit: int | None = None, from_date: date | None = None, t
 # =============================================================================
 
 # SCRAPERS: canton code -> (name, function, supports_from_date)
-# Most scrapers use direct access to official court portals
-# GL, GR, OW use entscheidsuche.ch as data source (official portals blocked or use complex JS)
+# Used by scrape_all_cantons() and CLI --canton.
+# NOTE: ZH, GE, VD, TI are NOT listed here because daily_update.py
+# calls them explicitly (steps 7, 11-13) to avoid duplicate scraping.
+# They can still be run individually via their own scripts.
 SCRAPERS = {
     # FindInfoWeb-based
     "SO": ("Solothurn", scrape_so_findinfoweb, True),
@@ -3817,14 +3819,8 @@ SCRAPERS = {
     # HTML Crawlers - French-speaking
     "FR": ("Fribourg", scrape_fr_crawler, True),
     "JU": ("Jura", scrape_ju_crawler, True),
-    "VD": ("Vaud", scrape_vd_findinfoweb, True),
-    "GE": ("Genève", scrape_ge_crawler, True),
     # Bilingual
     "VS": ("Valais", scrape_vs_crawler, True),
-    # Italian-speaking
-    "TI": ("Ticino", scrape_ti_findinfoweb, True),  # FindInfoWeb: sentenze.ti.ch
-    # Zürich (separate script)
-    "ZH": ("Zürich", scrape_zh_courts, True),  # Direct: gerichte-zh.ch
 }
 
 

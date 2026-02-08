@@ -201,13 +201,15 @@ def scrape_zh_courts(
         print("  Full historical import (no date filter)")
 
     stats = ScraperStats()
+    # Limit pagination for incremental updates (newest-first, 20 decisions/page)
+    max_pages = 15 if from_date else 100
 
     with get_session() as session:
         existing_count = session.exec(select(func.count(Decision.id))).one()
         print(f"Existing decisions in DB: {existing_count}")
 
         print("Fetching decision list from all pages...")
-        decisions = fetch_all_decisions(from_date=from_date, to_date=to_date)
+        decisions = fetch_all_decisions(from_date=from_date, to_date=to_date, max_pages=max_pages)
         print(f"Found {len(decisions)} unique decisions in date range")
 
         for dec_info in decisions:

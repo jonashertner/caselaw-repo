@@ -259,7 +259,7 @@ def run_incremental_scrapers(days: int = 7, skip_entscheidsuche: bool = True) ->
     print(f"\n[{step}/{total_steps}] Geneva Courts...")
     try:
         from scripts.scrape_cantons import scrape_ge_crawler
-        results["ge"] = run_scraper("ge", lambda from_date, **kw: scrape_ge_crawler(limit=None), from_date, to_date=to_date)
+        results["ge"] = run_scraper("ge", lambda from_date, **kw: scrape_ge_crawler(from_date=from_date), from_date, to_date=to_date)
     except ImportError as e:
         results["ge"] = {"status": "error", "count": 0, "error": str(e)}
 
@@ -268,7 +268,7 @@ def run_incremental_scrapers(days: int = 7, skip_entscheidsuche: bool = True) ->
     print(f"\n[{step}/{total_steps}] Vaud Courts...")
     try:
         from scripts.scrape_cantons import scrape_vd_crawler
-        results["vd"] = run_scraper("vd", lambda from_date, **kw: scrape_vd_crawler(limit=None), from_date, to_date=to_date)
+        results["vd"] = run_scraper("vd", lambda from_date, **kw: scrape_vd_crawler(from_date=from_date), from_date, to_date=to_date)
     except ImportError as e:
         results["vd"] = {"status": "error", "count": 0, "error": str(e)}
 
@@ -277,7 +277,7 @@ def run_incremental_scrapers(days: int = 7, skip_entscheidsuche: bool = True) ->
     print(f"\n[{step}/{total_steps}] Ticino Courts...")
     try:
         from scripts.scrape_cantons import scrape_ti_crawler
-        results["ti"] = run_scraper("ti", lambda from_date, **kw: scrape_ti_crawler(limit=None), from_date, to_date=to_date)
+        results["ti"] = run_scraper("ti", lambda from_date, **kw: scrape_ti_crawler(from_date=from_date), from_date, to_date=to_date)
     except ImportError as e:
         results["ti"] = {"status": "error", "count": 0, "error": str(e)}
 

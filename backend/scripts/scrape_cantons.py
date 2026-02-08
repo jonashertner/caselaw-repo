@@ -3193,6 +3193,12 @@ def scrape_ow_playwright(
                             elif lp.lower() in ("de", "fr", "it", "rm"):
                                 language = lp.lower()
 
+                        # Skip decisions older than from_date (before expensive fetch)
+                        if from_date and published and published < from_date:
+                            stats.add_skipped()
+                            consecutive_skips += 1
+                            continue
+
                         # Use docket from title
                         docket = title[:100] if title else None
 

@@ -27,7 +27,7 @@ concurrency:
 jobs:
   update-dataset:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 120
 
     services:
       postgres:
@@ -167,12 +167,8 @@ jobs:
             --build-dir _build
         continue-on-error: true
 
-      - name: Update SQLite snapshot
-        run: |
-          python -m caselaw_pipeline.cli consolidate-weekly \
-            --build-dir _build \
-            --zstd-level 10
-        continue-on-error: true
+      # NOTE: SQLite snapshot update (consolidate-weekly) is too heavy for CI
+      # (~17 GB download+decompress+recompress). Run locally or on self-hosted runner.
 
       - name: Write job summary
         run: |

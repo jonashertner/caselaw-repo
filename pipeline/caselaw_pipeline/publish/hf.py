@@ -32,6 +32,25 @@ def download_text(url: str, timeout_s: float = 60.0) -> str:
         return r.text
 
 
+def download_file_if_exists(url: str, out_path: Path, timeout_s: float = 120.0) -> bool:
+    """Download a file, returning True on success or False if 404."""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with httpx.stream("GET", url, follow_redirects=True, timeout=timeout_s) as r:
+            if r.status_code == 404:
+                return False
+            r.raise_for_status()
+            with out_path.open("wb") as f:
+                for chunk in r.iter_bytes():
+                    if chunk:
+                        f.write(chunk)
+        return True
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            return False
+        raise
+
+
 def upload_file(local_path: Path, repo_id: str, path_in_repo: str, token: str, commit_message: str) -> None:
     api = HfApi(token=token)
     api.upload_file(

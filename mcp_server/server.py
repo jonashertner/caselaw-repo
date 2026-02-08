@@ -89,10 +89,37 @@ def _fts_join(schema: str) -> str:
 
 
 def _download_from_huggingface() -> Optional[str]:
-    """Download SQLite database from HuggingFace."""
+    """Download SQLite database from HuggingFace.
+
+    Tries compressed (swisslaw.db.zst) first, falls back to uncompressed (swisslaw.db).
+    """
     try:
         from huggingface_hub import hf_hub_download
-        print("Downloading database from HuggingFace...", file=sys.stderr)
+
+        # Try compressed version first (artifacts/swisslaw.db.zst)
+        for zst_filename in ("artifacts/swisslaw.db.zst", "swisslaw.db.zst"):
+            try:
+                print(f"Trying {zst_filename} from HuggingFace...", file=sys.stderr)
+                zst_path = hf_hub_download(
+                    repo_id="voilaj/swiss-caselaw",
+                    filename=zst_filename,
+                    repo_type="dataset",
+                )
+                # Decompress to a sibling file
+                db_path = zst_path.removesuffix(".zst") if zst_path.endswith(".zst") else zst_path + ".decompressed"
+                if not Path(db_path).exists() or Path(db_path).stat().st_size == 0:
+                    print("Decompressing zstd...", file=sys.stderr)
+                    import zstandard as zstd
+                    dctx = zstd.ZstdDecompressor()
+                    with open(zst_path, "rb") as ifh, open(db_path, "wb") as ofh:
+                        dctx.copy_stream(ifh, ofh)
+                print(f"Downloaded and decompressed to: {db_path}", file=sys.stderr)
+                return db_path
+            except Exception:
+                continue
+
+        # Fallback to uncompressed
+        print("Downloading swisslaw.db from HuggingFace...", file=sys.stderr)
         path = hf_hub_download(
             repo_id="voilaj/swiss-caselaw",
             filename="swisslaw.db",
@@ -465,7 +492,7 @@ def get_decision(decision_id: str) -> str:
             with Session(db) as session:
                 sql = text("""
                     SELECT id, source_id, source_name, level, canton, court, chamber,
-                           docket, decision_date, publication_date, title, language,
+                           docket, decision_date, published_date, title, language,
                            url, pdf_url, content_text
                     FROM decisions WHERE id = :id
                 """)
@@ -477,14 +504,19 @@ def get_decision(decision_id: str) -> str:
                     "level": row.level, "canton": row.canton, "court": row.court,
                     "chamber": row.chamber, "docket": row.docket,
                     "decision_date": str(row.decision_date) if row.decision_date else None,
-                    "publication_date": str(row.publication_date) if row.publication_date else None,
+                    "published_date": str(row.published_date) if row.published_date else None,
                     "title": row.title, "language": row.language,
                     "url": row.url, "pdf_url": row.pdf_url, "content_text": row.content_text,
                 }, ensure_ascii=False, indent=2)
         else:
-            row = db.execute("""
+            # Try published_date first (new schema), fall back to publication_date (old snapshots)
+            date_col = "published_date"
+            cols = [r[1] for r in db.execute("PRAGMA table_info(decisions)").fetchall()]
+            if "published_date" not in cols and "publication_date" in cols:
+                date_col = "publication_date"
+            row = db.execute(f"""
                 SELECT id, source_id, source_name, level, canton, court, chamber,
-                       docket, decision_date, publication_date, title, language,
+                       docket, decision_date, {date_col} as published_date, title, language,
                        url, pdf_url, content_text
                 FROM decisions WHERE id = ?
             """, (decision_id,)).fetchone()

@@ -50,9 +50,9 @@ class TestNormalizeDecision:
         d = normalize_decision({"id": "test-1"})
         assert d["updated_at"] is not None
 
-    def test_rename_published_date(self):
-        d = normalize_decision({"id": "test-1", "published_date": "2024-01-01"})
-        assert d["publication_date"] == "2024-01-01"
+    def test_rename_publication_date(self):
+        d = normalize_decision({"id": "test-1", "publication_date": "2024-01-01"})
+        assert d["published_date"] == "2024-01-01"
 
     def test_rename_pdf(self):
         d = normalize_decision({"id": "test-1", "pdf": "https://example.com/d.pdf"})

@@ -64,7 +64,7 @@ CANTON_NAMES = {
     "GL": "Glarus", "GR": "Graubünden", "JU": "Jura",
     "LU": "Luzern", "NE": "Neuchâtel", "NW": "Nidwalden",
     "OW": "Obwalden", "SG": "St. Gallen", "SH": "Schaffhausen",
-    "SO": "Solothurn", "SZ": "Schwyz", "TA": "Tessin Alt",
+    "SO": "Solothurn", "SZ": "Schwyz", "TA": "Ticino (legacy)",
     "TG": "Thurgau", "TI": "Ticino", "UR": "Uri",
     "VD": "Vaud", "VS": "Valais", "ZG": "Zug", "ZH": "Zürich",
 }
@@ -156,7 +156,7 @@ def map_canton_to_source(canton: str, hierarchy: list[str] | None) -> tuple[str,
         "SH": ("sh_es", "Schaffhausen (entscheidsuche)", "cantonal"),
         "SO": ("so_es", "Solothurn (entscheidsuche)", "cantonal"),
         "SZ": ("sz_es", "Schwyz (entscheidsuche)", "cantonal"),
-        "TA": ("ta_es", "Tessin Alt (entscheidsuche)", "cantonal"),
+        "TA": ("ta_es", "Tessin Alt (entscheidsuche)", "cantonal"),  # canton mapped to TI below
         "TG": ("tg_es", "Thurgau (entscheidsuche)", "cantonal"),
         "TI": ("ti_es", "Ticino (entscheidsuche)", "cantonal"),
         "UR": ("ur_es", "Uri (entscheidsuche)", "cantonal"),
@@ -193,11 +193,15 @@ def parse_decision(hit: dict) -> dict | None:
         except ValueError:
             pass
 
-    # Get canton
+    # Get canton — map legacy "TA" (Tessin Alt) to proper "TI" code
     canton = src.get("canton", "")
+    if canton == "TA":
+        canton = "TI"
 
-    # Map to source
-    source_id, source_name, level = map_canton_to_source(canton, src.get("hierarchy"))
+    # Map to source (uses original canton from API for source_id lookup)
+    source_id, source_name, level = map_canton_to_source(
+        src.get("canton", ""), src.get("hierarchy")
+    )
 
     # Get title
     title_obj = src.get("title", {})

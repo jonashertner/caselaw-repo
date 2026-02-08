@@ -43,10 +43,21 @@ jobs:
           python -m caselaw_pipeline.cli consolidate-data \
             --build-dir _build
 
+      - name: Update SQLite snapshot
+        run: |
+          python -m caselaw_pipeline.cli consolidate-weekly \
+            --build-dir _build \
+            --zstd-level 10
+        # Only run if a snapshot already exists in the manifest.
+        # To bootstrap the first snapshot, run build-snapshot + publish-snapshot locally.
+        continue-on-error: true
+
       - name: Write job summary
         run: |
           echo "## Weekly Dataset Consolidation" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Downloaded all data/*.parquet shards, deduplicated by ID, re-uploaded clean shards." >> $GITHUB_STEP_SUMMARY
+          echo "- Consolidated delta parquet files in data/" >> $GITHUB_STEP_SUMMARY
+          echo "- Updated SQLite snapshot (if available)" >> $GITHUB_STEP_SUMMARY
+          echo "- Updated id-index.parquet" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- [HuggingFace Dataset](https://huggingface.co/datasets/voilaj/swiss-caselaw)" >> $GITHUB_STEP_SUMMARY

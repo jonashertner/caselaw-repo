@@ -23,7 +23,7 @@ import sys
 import time
 from datetime import date, timedelta
 from pathlib import Path
-from urllib.parse import urljoin, urlencode
+from urllib.parse import urljoin, urlencode, unquote
 
 import httpx
 from bs4 import BeautifulSoup
@@ -2782,7 +2782,6 @@ def scrape_zg_crawler(limit: int | None = None, from_date: date | None = None, t
                         continue
 
                     # Extract filename for case number
-                    from urllib.parse import unquote
                     filename = unquote(href.split("/")[-1])
 
                     # Try to extract case number from filename or content
@@ -3032,187 +3031,348 @@ def scrape_gr_entscheidsuche(
 
 
 # =============================================================================
-# OBWALDEN (OW) - via entscheidsuche.ch (static files)
+# OBWALDEN (OW) - Playwright scraper (Vaadin 7.1.15 / LEv3 portal)
 # =============================================================================
 
-def scrape_ow_entscheidsuche(
+def scrape_ow_playwright(
     limit: int | None = None,
     from_date: date | None = None,
     to_date: date | None = None,
 ) -> int:
-    """Scrape decisions from Obwalden via entscheidsuche.ch.
+    """Scrape decisions from Obwalden via Playwright (rechtsprechung.ow.ch).
 
-    rechtsprechung.ow.ch uses Vaadin which requires complex UIDL protocol.
-    entscheidsuche.ch provides access to ~2,201 OW decisions via static files.
+    The OW portal uses Vaadin 7.1.15 (LEv3 from Weblaw) which requires a
+    headless browser. Playwright handles pagination through search results,
+    extracting metadata from the result list and full text from document pages.
     """
-    print("Scraping Obwalden (via entscheidsuche.ch)...")
+    from playwright.sync_api import sync_playwright
 
-    index_url = "https://entscheidsuche.ch/docs/OW_Gerichte/"
+    print("Scraping Obwalden (rechtsprechung.ow.ch - Playwright)...")
     stats = ScraperStats()
-    _date_in_filename = re.compile(r"(\d{4}-\d{2}-\d{2})\.json$")
+    portal_url = "https://rechtsprechung.ow.ch/le/"
 
-    with get_session() as session:
-        # Get directory listing
-        try:
-            resp = fetch_page(index_url)
-        except Exception as e:
-            print(f"  Error fetching index: {e}")
-            return 0
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=True)
+        context = browser.new_context()
+        page = context.new_page()
 
-        # Parse JSON files from directory listing
-        soup = BeautifulSoup(resp.text, "html.parser")
-        json_links = []
+        # Load portal and search
+        page.goto(portal_url, timeout=30000)
+        page.wait_for_load_state("networkidle")
+        time.sleep(3)
 
-        for link in soup.find_all("a", href=True):
-            href = link.get("href", "")
-            if href.endswith(".json"):
-                # Skip files with dates before from_date
-                if from_date:
-                    m = _date_in_filename.search(href)
-                    if m:
-                        try:
-                            file_date = date.fromisoformat(m.group(1))
-                            if file_date < from_date:
-                                continue
-                        except ValueError:
-                            pass
-                json_links.append(href)
+        search_input = page.locator("input.v-textfield").first
+        search_input.fill("*")
+        search_input.press("Enter")
+        time.sleep(5)
 
-        print(f"  Found {len(json_links)} decision metadata files")
+        # Sort by date (newest first) for incremental scraping
+        option_btn = page.query_selector(".result-optionbutton")
+        if option_btn:
+            option_btn.click()
+            time.sleep(1)
+            sort_btn = page.query_selector(".result-optionbutton-item")
+            if sort_btn:
+                sort_btn.click()
+                time.sleep(5)
 
-        for json_file in json_links:
-            if limit and stats.imported >= limit:
-                break
+        # Parse total result count
+        body = page.inner_text("body")
+        m = re.search(r"Resultat\s+\d+-\d+\s+von\s+(\d+)", body)
+        total = int(m.group(1)) if m else 0
+        print(f"  Total results: {total}")
 
-            # Extract doc_id from filename
-            doc_id = json_file.replace(".json", "")
-            stable_id = stable_uuid_url(f"ow:{doc_id}")
+        page_num = 0
+        consecutive_skips = 0
+        max_consecutive_skips = 50  # Stop after 50 consecutive existing decisions
 
-            # Construct URL early for checking
-            html_file = json_file.replace(".json", ".html")
-            html_url = f"{index_url}{html_file}"
+        with get_session() as session:
+            while True:
+                if limit and stats.imported >= limit:
+                    break
+                if consecutive_skips >= max_consecutive_skips and from_date:
+                    print(f"  Stopping: {consecutive_skips} consecutive skips (all existing)")
+                    break
 
-            # Check if exists by ID
-            existing = session.get(Decision, stable_id)
-            if existing:
-                stats.add_skipped()
-                continue
-
-            # Also check by URL (may exist with different ID from old scraper)
-            existing_by_url = session.exec(
-                select(Decision).where(Decision.url == html_url)
-            ).first()
-            if existing_by_url:
-                stats.add_skipped()
-                continue
-
-            # Fetch JSON metadata
-            json_url = f"{index_url}{json_file}"
-            try:
-                rate_limiter.wait()
-                meta_resp = httpx.get(json_url, headers=DEFAULT_HEADERS, timeout=60)
-                meta_resp.raise_for_status()
-                metadata = meta_resp.json()
-            except Exception as e:
-                print(f"    Error fetching metadata {json_file}: {e}")
-                stats.add_error()
-                continue
-
-            # Get content from HTML file or abstract (html_url already defined above)
-            content = ""
-
-            try:
-                rate_limiter.wait()
-                html_resp = httpx.get(html_url, headers=DEFAULT_HEADERS, timeout=60)
-                if html_resp.status_code == 200:
-                    soup = BeautifulSoup(html_resp.text, "html.parser")
-                    content = soup.get_text(separator="\n", strip=True)
-            except Exception:
-                pass
-
-            # Fallback to abstract in metadata
-            if not content or len(content) < 100:
-                abstract = metadata.get("Abstract", [])
-                if abstract:
-                    content = "\n".join(item.get("Text", "") for item in abstract)
-
-            if not content or len(content) < 50:
-                # Still import with minimal content if we have metadata
-                kopfzeile = metadata.get("Kopfzeile", [])
-                if kopfzeile:
-                    content = kopfzeile[0].get("Text", "")
-
-            if not content:
-                stats.add_skipped()
-                continue
-
-            # Parse metadata
-            date_str = metadata.get("Datum", "")
-            decision_date = None
-            if date_str and date_str != "0000-00-00":
-                try:
-                    decision_date = date.fromisoformat(date_str)
-                except ValueError:
-                    decision_date = parse_date_flexible(date_str)
-
-            # Extract case number from Num field
-            num_list = metadata.get("Num", [])
-            case_number = num_list[0] if num_list else None
-
-            # Determine court from Signatur
-            signatur = metadata.get("Signatur", "")
-            court = "Obergericht"
-            if "_VG_" in signatur:
-                court = "Verwaltungsgericht"
-            elif "_VB_" in signatur:
-                court = "Verwaltungsbeschwerden"
-
-            # Get title from Kopfzeile
-            kopfzeile = metadata.get("Kopfzeile", [])
-            title = kopfzeile[0].get("Text", "") if kopfzeile else f"OW {case_number}"
-
-            # Original URL from metadata
-            orig_url = metadata.get("HTML", {}).get("URL", "")
-
-            try:
-                dec = Decision(
-                    id=stable_id,
-                    source_id="ow",
-                    source_name="Obwalden",
-                    level="cantonal",
-                    canton="OW",
-                    court=court,
-                    chamber=None,
-                    docket=case_number[:100] if case_number else None,
-                    decision_date=decision_date,
-                    published_date=None,
-                    title=(title or f"OW {case_number}")[:500],
-                    language="de",
-                    url=orig_url or html_url,
-                    pdf_url=None,
-                    content_text=content,
-                    content_hash=compute_hash(content),
-                    meta={
-                        "source": "entscheidsuche.ch",
-                        "signatur": signatur,
-                        "spider": metadata.get("Spider", ""),
-                    },
+                # Extract results from current page
+                entries = page.query_selector_all(
+                    ".v-slot.v-slot-result-entry-item-normal"
                 )
-                session.merge(dec)
-                stats.add_imported()
+                if not entries:
+                    print("  No entries on page, stopping.")
+                    break
 
-                if stats.imported % 100 == 0:
-                    print(f"    Imported {stats.imported} (skipped {stats.skipped})...")
-                    session.commit()
+                page_num += 1
+                print(f"  Page {page_num}: {len(entries)} entries")
 
-            except Exception as e:
-                print(f"    Error saving: {e}")
-                stats.add_error()
+                for entry in entries:
+                    if limit and stats.imported >= limit:
+                        break
 
-        session.commit()
+                    try:
+                        # Extract title and URL
+                        title_el = entry.query_selector(
+                            ".result-entry-title a"
+                        )
+                        if not title_el:
+                            stats.add_skipped()
+                            continue
+
+                        title = title_el.inner_text().strip()
+                        href = title_el.get_attribute("href") or ""
+
+                        # Extract leid (file path) from URL
+                        leid_m = re.search(r"leid=([^&]+)", href)
+                        leid = unquote(leid_m.group(1)) if leid_m else ""
+
+                        # Extract original download path
+                        orig_el = entry.query_selector(
+                            ".custom-result-component-original a, "
+                            ".result-orig-link a"
+                        )
+                        orig_path = (
+                            orig_el.get_attribute("href") if orig_el else ""
+                        )
+
+                        # Build stable URL from original path
+                        if orig_path:
+                            url = f"https://rechtsprechung.ow.ch{orig_path}"
+                        elif leid:
+                            url = f"https://rechtsprechung.ow.ch/le/doc/{leid}"
+                        else:
+                            url = href
+
+                        stable_id = stable_uuid_url(f"ow:{orig_path or leid or title}")
+
+                        # Check if already exists
+                        existing = session.get(Decision, stable_id)
+                        if existing:
+                            stats.add_skipped()
+                            consecutive_skips += 1
+                            continue
+                        consecutive_skips = 0
+
+                        # Extract preview text
+                        preview_el = entry.query_selector(".lepreview")
+                        preview = (
+                            preview_el.inner_text().strip()
+                            if preview_el
+                            else ""
+                        )
+
+                        # Extract labels (date, format, language)
+                        labels_el = entry.query_selector(
+                            ".result-entry-labels"
+                        )
+                        labels_text = (
+                            labels_el.inner_text().strip()
+                            if labels_el
+                            else ""
+                        )
+                        label_parts = [
+                            p.strip()
+                            for p in labels_text.split("\n")
+                            if p.strip()
+                        ]
+
+                        # Parse published date from labels
+                        published = None
+                        language = "de"
+                        for lp in label_parts:
+                            # Date like "26.11.2015"
+                            dm = re.match(r"(\d{2})\.(\d{2})\.(\d{4})", lp)
+                            if dm:
+                                try:
+                                    published = date(
+                                        int(dm.group(3)),
+                                        int(dm.group(2)),
+                                        int(dm.group(1)),
+                                    )
+                                except ValueError:
+                                    pass
+                            elif lp.lower() in ("de", "fr", "it", "rm"):
+                                language = lp.lower()
+
+                        # Use docket from title
+                        docket = title[:100] if title else None
+
+                        # Fetch full document text via cached URL
+                        content = preview
+                        full_text = _ow_fetch_doc(context, href)
+                        court = None
+                        decision_dt = None
+                        text_for_parsing = full_text or preview
+
+                        if full_text and len(full_text) > len(preview):
+                            content = full_text
+
+                        # Parse court from text
+                        court = _ow_detect_court(
+                            title, text_for_parsing
+                        )
+
+                        # Parse decision date from text
+                        dt_m = re.search(
+                            r"(?:Entscheid|Urteil|Beschluss"
+                            r"|Verfügung)"
+                            r".*?vom\s+(\d{1,2})\.\s*(\w+)"
+                            r"\s+(\d{4})",
+                            text_for_parsing,
+                        )
+                        if dt_m:
+                            decision_dt = _parse_german_date(
+                                dt_m.group(1),
+                                dt_m.group(2),
+                                dt_m.group(3),
+                            )
+
+                        dec = Decision(
+                            id=stable_id,
+                            source_id="ow_le",
+                            source_name="Obwalden (rechtsprechung.ow.ch)",
+                            level="cantonal",
+                            canton="OW",
+                            court=court,
+                            chamber=None,
+                            docket=docket,
+                            decision_date=decision_dt,
+                            published_date=published,
+                            title=title[:500],
+                            language=language,
+                            url=url,
+                            pdf_url=None,
+                            content_text=content,
+                            content_hash=compute_hash(content) if content else None,
+                            meta={
+                                "source": "rechtsprechung.ow.ch",
+                                "leid": leid,
+                                "orig_path": orig_path,
+                            },
+                        )
+                        session.merge(dec)
+                        stats.add_imported()
+
+                        if stats.imported % 100 == 0:
+                            print(
+                                f"    Imported {stats.imported} "
+                                f"(skipped {stats.skipped})..."
+                            )
+                            session.commit()
+
+                    except Exception as e:
+                        print(f"    Error processing entry: {e}")
+                        stats.add_error()
+
+                session.commit()
+
+                # Click WEITER for next page
+                weiter = page.query_selector(
+                    ".result-pager-next-active"
+                )
+                if not weiter:
+                    print("  No more pages (WEITER button inactive).")
+                    break
+
+                weiter.click()
+                time.sleep(3)
+
+                # Verify page changed
+                new_body = page.inner_text("body")
+                new_m = re.search(
+                    r"Resultat\s+(\d+)-(\d+)\s+von\s+(\d+)", new_body
+                )
+                if new_m:
+                    start = int(new_m.group(1))
+                    end = int(new_m.group(2))
+                    if start == 1 and page_num > 1:
+                        # Pagination looped back to start
+                        break
+
+        browser.close()
 
     print(stats.summary("Obwalden"))
     return stats.imported
+
+
+def _ow_fetch_doc(browser_context, cached_href: str) -> str | None:
+    """Fetch full document text from OW cached URL via Playwright.
+
+    The cached URL (from the result list) includes the session-specific
+    authuser token needed for Vaadin to serve the document content.
+    Returns the cleaned text or None on failure.
+    """
+    if not cached_href:
+        return None
+
+    # Ensure HTTPS and remove :80 port
+    url = cached_href
+    if url.startswith("http://"):
+        url = url.replace("http://", "https://", 1)
+    url = re.sub(r":80(/)", r"\1", url)
+
+    try:
+        doc_page = browser_context.new_page()
+        doc_page.goto(url, timeout=15000)
+        time.sleep(2)
+
+        full_text = doc_page.inner_text("body").strip()
+        doc_page.close()
+
+        # Skip error pages
+        if "Authorization fail" in full_text or "not found" in full_text:
+            return None
+
+        # Remove navigation header (e.g., "Neue SucheOriginalAbR-00-01-01.htm")
+        full_text = re.sub(
+            r"^Neue Suche\s*Original\s*\S+\.htm\s*\n*",
+            "",
+            full_text,
+        ).strip()
+
+        return full_text if full_text else None
+
+    except Exception:
+        return None
+
+
+def _ow_detect_court(title: str, text: str) -> str | None:
+    """Detect the OW court from title prefix or decision text."""
+    # Title prefix gives a strong signal for OGVE
+    if title.startswith("OGVE") or title.startswith("OGE"):
+        return "Obergericht"
+    if title.startswith("VGE"):
+        return "Verwaltungsgericht"
+
+    # Parse from text (e.g., "Entscheid des Obergerichts vom ...")
+    court_patterns = [
+        (r"(?:des|der)\s+Obergericht", "Obergericht"),
+        (r"Obergerichtskommission", "Obergericht"),
+        (r"(?:des|der)\s+Verwaltungsgericht", "Verwaltungsgericht"),
+        (r"(?:des|der)\s+Kantonsgericht", "Kantonsgericht"),
+        (r"(?:des|der)\s+Regierungsrat", "Regierungsrat"),
+        (r"(?:des|der)\s+Justizkommission", "Justizkommission"),
+    ]
+    for pattern, court_name in court_patterns:
+        if re.search(pattern, text):
+            return court_name
+
+    return None
+
+
+def _parse_german_date(day: str, month_name: str, year: str) -> date | None:
+    """Parse a German date like '24. August 2000' into a date object."""
+    months = {
+        "Januar": 1, "February": 2, "Februar": 2, "März": 3, "April": 4,
+        "Mai": 5, "Juni": 6, "Juli": 7, "August": 8, "September": 9,
+        "Oktober": 10, "November": 11, "Dezember": 12,
+    }
+    m = months.get(month_name)
+    if not m:
+        return None
+    try:
+        return date(int(year), m, int(day))
+    except ValueError:
+        return None
 
 
 # =============================================================================
@@ -3815,7 +3975,8 @@ SCRAPERS = {
     # Via entscheidsuche.ch (official portals use complex JS or block access)
     "GL": ("Glarus", scrape_gl_entscheidsuche, True),
     "GR": ("Graubünden", scrape_gr_entscheidsuche, True),
-    "OW": ("Obwalden", scrape_ow_entscheidsuche, True),
+    # Playwright-based (Vaadin 7.1.15 portal requires headless browser)
+    "OW": ("Obwalden", scrape_ow_playwright, True),
     # HTML Crawlers - French-speaking
     "FR": ("Fribourg", scrape_fr_crawler, True),
     "JU": ("Jura", scrape_ju_crawler, True),

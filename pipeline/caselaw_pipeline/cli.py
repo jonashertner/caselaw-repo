@@ -22,7 +22,7 @@ from .artifacts.sqlite_db import (
 from .artifacts.parquet_io import export_delta_parquet_from_sqlite, export_snapshot_parquet_from_sqlite
 from .artifacts.manifest import add_delta, empty_manifest, load_manifest, save_manifest, set_snapshot
 from .artifacts.meta import file_meta
-from .publish.hf import download_file, download_text, resolve_url, upload_file
+from .publish.hf import download_file, download_file_if_exists, download_text, resolve_url, upload_file
 from .util.loggingutil import setup_logging
 from .util.timeutil import iso_week
 
@@ -247,30 +247,12 @@ def cmd_append_to_data(args: argparse.Namespace) -> None:
         log.info("Delta parquet has 0 rows, skipping append-to-data")
         return
 
-    # Align schema to match base dataset:
-    # Base: id, source_id, source_name, level, canton, court, chamber, docket,
-    #        decision_date, published_date, title, language, url, pdf_url, content_text
-    # Delta: id, source_id, source_name, level, canton, court, chamber, language, docket,
-    #         decision_date, publication_date, title, url, pdf_url, content_text,
-    #         content_sha256, fetched_at, updated_at
+    # Align schema to match base dataset (select only base columns, in order)
     BASE_COLS = [
         "id", "source_id", "source_name", "level", "canton", "court", "chamber",
         "docket", "decision_date", "published_date", "title", "language",
         "url", "pdf_url", "content_text",
     ]
-    RENAMES = {"publication_date": "published_date"}
-
-    # Rename columns
-    col_names = table.column_names
-    for old_name, new_name in RENAMES.items():
-        if old_name in col_names and new_name not in col_names:
-            idx = col_names.index(old_name)
-            table = table.rename_columns(
-                [new_name if c == old_name else c for c in col_names]
-            )
-            col_names = table.column_names
-
-    # Select only base columns (in order)
     columns_to_select = [c for c in BASE_COLS if c in table.column_names]
     table = table.select(columns_to_select)
 
@@ -374,11 +356,57 @@ def cmd_consolidate_weekly(args: argparse.Namespace) -> None:
     log.info("Weekly consolidation published: %s", week)
 
 
+def _read_base_ids_from_index(hf_repo: str, work: Path) -> set[str] | None:
+    """Try to read base IDs from the lightweight id-index.parquet artifact."""
+    import pyarrow.parquet as pq
+
+    index_url = resolve_url(hf_repo, "artifacts/id-index.parquet")
+    index_path = work / "id-index.parquet"
+    if download_file_if_exists(index_url, index_path):
+        ids = set(pq.read_table(index_path, columns=["id"]).column("id").to_pylist())
+        log.info("Loaded %d base IDs from id-index.parquet", len(ids))
+        return ids
+    return None
+
+
+def _read_base_ids_remote(hf_repo: str, base_files: list[str], hf_token: str) -> set[str]:
+    """Read IDs from base shards via remote column projection (HfFileSystem)."""
+    import pyarrow.parquet as pq
+
+    try:
+        from huggingface_hub import HfFileSystem
+        fs = HfFileSystem(token=hf_token)
+        base_ids: set[str] = set()
+        for fname in base_files:
+            remote_path = f"datasets/{hf_repo}/{fname}"
+            pf = pq.ParquetFile(fs.open(remote_path, "rb"))
+            for batch in pf.iter_batches(columns=["id"], batch_size=100_000):
+                base_ids.update(batch.column("id").to_pylist())
+            log.info("  Remote %s: total IDs so far %d", fname.split("/")[-1], len(base_ids))
+        return base_ids
+    except Exception as e:
+        log.warning("HfFileSystem column projection failed: %s", e)
+        raise
+
+
+def _upload_id_index(all_ids: set[str], work: Path, hf_repo: str, hf_token: str) -> None:
+    """Upload an updated id-index.parquet to artifacts/."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    index_path = work / "id-index.parquet"
+    table = pa.table({"id": pa.array(sorted(all_ids), type=pa.string())})
+    pq.write_table(table, index_path, compression="zstd")
+    upload_file(index_path, hf_repo, "artifacts/id-index.parquet", hf_token,
+                commit_message="update id-index after consolidation")
+    log.info("Uploaded id-index.parquet with %d IDs", len(all_ids))
+
+
 def cmd_consolidate_data(args: argparse.Namespace) -> None:
     """Merge delta-*.parquet files in data/ into a single file; remove duplicates against base.
 
-    Lightweight: downloads delta files fully + only ID column from base shards.
-    Base shards (train-*) are never fully downloaded — only their IDs.
+    Uses a lightweight id-index.parquet (~15 MB) instead of downloading all base shards
+    (9.6 GB). Falls back to remote column projection via HfFileSystem if index is missing.
     """
     hf_repo = args.hf_repo or _env("HF_DATASET_REPO")
     hf_token = args.hf_token or _env("HF_TOKEN")
@@ -413,27 +441,18 @@ def cmd_consolidate_data(args: argparse.Namespace) -> None:
     download_dir = work / "download"
     download_dir.mkdir()
 
-    # Step 1: Collect IDs from base shards (only ID column — minimal memory)
-    base_ids = set()
-    for fname in base_files:
-        local = Path(api.hf_hub_download(hf_repo, fname, repo_type="dataset", local_dir=str(download_dir)))
-        id_col = pq.read_table(local, columns=["id"]).column("id").to_pylist()
-        base_ids.update(id_col)
-        log.info("  Base %s: %d IDs", fname.split("/")[-1], len(id_col))
+    # Step 1: Collect IDs from base shards using lightweight index
+    base_ids = _read_base_ids_from_index(hf_repo, work)
+    if base_ids is None:
+        log.info("No id-index found; falling back to remote column projection")
+        base_ids = _read_base_ids_remote(hf_repo, base_files, hf_token)
     log.info("Total base IDs: %d", len(base_ids))
 
-    # Step 2: Read delta files, align schema, merge and deduplicate
-    RENAMES = {"publication_date": "published_date"}
+    # Step 2: Read delta files, merge and deduplicate
     delta_tables = []
     for fname in delta_files:
         local = Path(api.hf_hub_download(hf_repo, fname, repo_type="dataset", local_dir=str(download_dir)))
         dt = pq.read_table(local)
-        # Rename columns to match base
-        col_names = dt.column_names
-        for old_name, new_name in RENAMES.items():
-            if old_name in col_names and new_name not in col_names:
-                dt = dt.rename_columns([new_name if c == old_name else c for c in col_names])
-                col_names = dt.column_names
         delta_tables.append(dt)
         log.info("  Delta %s: %d rows", fname.split("/")[-1], dt.num_rows)
 
@@ -442,7 +461,7 @@ def cmd_consolidate_data(args: argparse.Namespace) -> None:
 
     # Deduplicate within deltas (keep last occurrence)
     ids = merged.column("id").to_pylist()
-    seen = set()
+    seen: set[str] = set()
     keep_mask = []
     for i in range(len(ids) - 1, -1, -1):
         if ids[i] not in seen:
@@ -468,7 +487,6 @@ def cmd_consolidate_data(args: argparse.Namespace) -> None:
 
     # Step 4: Upload merged novel decisions as single file (if any)
     if novel.num_rows > 0:
-        # Select only columns that exist in base shards
         base_cols = [c for c in ["id", "source_id", "source_name", "level", "canton", "court",
                                   "chamber", "docket", "decision_date", "published_date", "title",
                                   "language", "url", "pdf_url", "content_text"]
@@ -481,6 +499,10 @@ def cmd_consolidate_data(args: argparse.Namespace) -> None:
         log.info("Uploaded consolidated delta: %d rows", novel.num_rows)
     else:
         log.info("No novel decisions — all deltas were duplicates of base")
+
+    # Step 5: Update ID index with novel IDs
+    all_ids = base_ids | set(novel.column("id").to_pylist()) if novel.num_rows > 0 else base_ids
+    _upload_id_index(all_ids, work, hf_repo, hf_token)
 
 
 def build_parser() -> argparse.ArgumentParser:

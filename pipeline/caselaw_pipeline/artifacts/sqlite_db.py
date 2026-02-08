@@ -23,7 +23,7 @@ DECISION_COLS: List[str] = [
     "language",
     "docket",
     "decision_date",
-    "publication_date",
+    "published_date",
     "title",
     "url",
     "pdf_url",
@@ -64,8 +64,8 @@ def normalize_decision(d: Dict[str, Any]) -> Dict[str, Any]:
     out["updated_at"] = d.get("updated_at") or now
 
     # Common optional renames in upstream exports
-    if out.get("publication_date") is None and d.get("published_date"):
-        out["publication_date"] = d.get("published_date")
+    if out.get("published_date") is None and d.get("publication_date"):
+        out["published_date"] = d.get("publication_date")
     if out.get("pdf_url") is None and d.get("pdf"):
         out["pdf_url"] = d.get("pdf")
     if out.get("url") is None and d.get("permalink"):
@@ -99,7 +99,7 @@ def create_delta_db(path: Path) -> None:
               language TEXT,
               docket TEXT,
               decision_date TEXT,
-              publication_date TEXT,
+              published_date TEXT,
               title TEXT,
               url TEXT,
               pdf_url TEXT,
@@ -151,7 +151,7 @@ def create_snapshot_db(path: Path) -> None:
               language TEXT,
               docket TEXT,
               decision_date TEXT,
-              publication_date TEXT,
+              published_date TEXT,
               title TEXT,
               url TEXT,
               pdf_url TEXT,

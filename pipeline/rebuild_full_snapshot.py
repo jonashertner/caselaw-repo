@@ -48,7 +48,7 @@ def create_snapshot_schema(conn: sqlite3.Connection) -> None:
             language TEXT,
             docket TEXT,
             decision_date TEXT,
-            publication_date TEXT,
+            published_date TEXT,
             title TEXT,
             url TEXT,
             pdf_url TEXT,
@@ -117,7 +117,7 @@ def copy_decisions(source_conn: sqlite3.Connection, dest_conn: sqlite3.Connectio
             row["language"],
             row["docket"],
             row["decision_date"],
-            row["published_date"],  # maps to publication_date
+            row["published_date"],
             row["title"],
             row["url"],
             row["pdf_url"],
@@ -131,7 +131,7 @@ def copy_decisions(source_conn: sqlite3.Connection, dest_conn: sqlite3.Connectio
             dest_conn.executemany("""
                 INSERT INTO decisions (
                     id, source_id, source_name, level, canton, court, chamber,
-                    language, docket, decision_date, publication_date, title,
+                    language, docket, decision_date, published_date, title,
                     url, pdf_url, content_text, content_sha256, fetched_at, updated_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, batch)
@@ -145,7 +145,7 @@ def copy_decisions(source_conn: sqlite3.Connection, dest_conn: sqlite3.Connectio
         dest_conn.executemany("""
             INSERT INTO decisions (
                 id, source_id, source_name, level, canton, court, chamber,
-                language, docket, decision_date, publication_date, title,
+                language, docket, decision_date, published_date, title,
                 url, pdf_url, content_text, content_sha256, fetched_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, batch)

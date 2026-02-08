@@ -18,6 +18,7 @@ import argparse
 import datetime as dt
 import logging
 import os
+import signal
 import sys
 import time
 from datetime import date, timedelta
@@ -86,22 +87,39 @@ def get_stats() -> dict:
         return {"total": total, "federal": federal, "cantonal": cantonal}
 
 
+SCRAPER_TIMEOUT_SECONDS = 600  # 10 minutes per scraper
+
+
+class ScraperTimeout(Exception):
+    pass
+
+
+def _timeout_handler(signum, frame):
+    raise ScraperTimeout("Scraper timed out")
+
+
 def run_scraper(
     name: str,
     scraper_func,
     from_date: date | None,
     to_date: date | None = None,
+    timeout: int = SCRAPER_TIMEOUT_SECONDS,
     **kwargs
 ) -> dict:
-    """Run a single scraper with error handling and metrics tracking.
+    """Run a single scraper with error handling, timeout, and metrics tracking.
 
     Returns:
         Dict with status, count, and optionally error
     """
     started_at = dt.datetime.now(dt.timezone.utc)
 
+    # Set per-scraper timeout (signal.alarm works on Linux/macOS main thread)
+    old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
+    signal.alarm(timeout)
+
     try:
         count = scraper_func(from_date=from_date, **kwargs)
+        signal.alarm(0)  # cancel alarm on success
         result = {"status": "success", "count": count or 0}
 
         # Record successful run
@@ -115,11 +133,25 @@ def run_scraper(
         )
 
         return result
+    except ScraperTimeout:
+        logger.warning(f"Scraper {name} timed out after {timeout}s — skipping")
+        result = {"status": "timeout", "count": 0, "error": f"Timed out after {timeout}s"}
+
+        record_ingestion_run(
+            scraper_name=name,
+            status="timeout",
+            started_at=started_at,
+            from_date=from_date,
+            to_date=to_date or date.today(),
+            errors=1,
+            error_message=f"Timed out after {timeout}s",
+        )
+
+        return result
     except Exception as e:
         logger.exception(f"Error running {name}")
         result = {"status": "error", "count": 0, "error": str(e)}
 
-        # Record failed run
         record_ingestion_run(
             scraper_name=name,
             status="failed",
@@ -131,6 +163,9 @@ def run_scraper(
         )
 
         return result
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old_handler)
 
 
 def run_incremental_scrapers(days: int = 7, skip_entscheidsuche: bool = True) -> dict[str, dict]:
@@ -337,7 +372,7 @@ def print_summary(results: dict[str, dict], before_stats: dict, after_stats: dic
     """Print a formatted summary of the update."""
     total_added = after_stats["total"] - before_stats["total"]
     total_imported = sum(r.get("count", 0) for r in results.values())
-    errors = [name for name, r in results.items() if r.get("status") == "error"]
+    errors = [name for name, r in results.items() if r.get("status") in ("error", "timeout")]
 
     print(f"\n{'='*60}")
     print("UPDATE SUMMARY")
@@ -348,7 +383,7 @@ def print_summary(results: dict[str, dict], before_stats: dict, after_stats: dic
     for name in ["bger", "bvger", "bstger", "bpatger", "weko", "edoeb"]:
         if name in results:
             r = results[name]
-            status = "OK" if r["status"] == "success" else "FAILED"
+            status = "OK" if r["status"] == "success" else ("TIMEOUT" if r["status"] == "timeout" else "FAILED")
             count = r.get("count", 0)
             print(f"  {name.upper():12} [{status}]: {count:,} imported")
 
@@ -357,7 +392,7 @@ def print_summary(results: dict[str, dict], before_stats: dict, after_stats: dic
     for name in ["zh", "zh_steuerrekurs", "zh_baurekurs", "zh_sozialversicherung"]:
         if name in results:
             r = results[name]
-            status = "OK" if r["status"] == "success" else "FAILED"
+            status = "OK" if r["status"] == "success" else ("TIMEOUT" if r["status"] == "timeout" else "FAILED")
             count = r.get("count", 0)
             print(f"  {name:20} [{status}]: {count:,} imported")
 

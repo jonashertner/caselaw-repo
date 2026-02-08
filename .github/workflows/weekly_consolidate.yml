@@ -1,19 +1,26 @@
-name: caselaw-weekly-consolidate
+name: Weekly Dataset Consolidation
 
 on:
-  workflow_dispatch:
   schedule:
-    - cron: "30 3 * * 0"  # weekly on Sunday 03:30 UTC
+    # Run Monday 2 AM UTC — after daily (4 AM Sun) and weekly entscheidsuche (5 AM Sun)
+    - cron: '0 2 * * 1'
+  workflow_dispatch:
+
+env:
+  HF_TOKEN: ${{ secrets.HF_TOKEN }}
+  HF_DATASET_REPO: ${{ secrets.HF_DATASET_REPO }}
+  LOG_LEVEL: INFO
+
+# Prevent concurrent runs of data update workflows
+concurrency:
+  group: data-update
+  cancel-in-progress: false
 
 jobs:
-  weekly:
-    # For million+ docs, prefer a self-hosted runner with fast disk.
-    runs-on: self-hosted
-    timeout-minutes: 1440
-    env:
-      HF_TOKEN: ${{ secrets.HF_TOKEN }}
-      HF_DATASET_REPO: ${{ secrets.HF_DATASET_REPO }}
-      LOG_LEVEL: INFO
+  consolidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -21,7 +28,9 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: pipeline/requirements.txt
 
       - name: Install pipeline deps
         run: |
@@ -29,16 +38,15 @@ jobs:
           pip install -r pipeline/requirements.txt
           pip install -e pipeline
 
-      - name: Get current week
-        id: week
+      - name: Consolidate data shards
         run: |
-          WEEK=$(python -c "import datetime as dt; y,w,_=dt.date.today().isocalendar(); print(f'{y}-W{w:02d}')")
-          echo "week=$WEEK" >> $GITHUB_OUTPUT
+          python -m caselaw_pipeline.cli consolidate-data \
+            --build-dir _build
 
-      - name: Consolidate weekly snapshot
+      - name: Write job summary
         run: |
-          python -m caselaw_pipeline.cli consolidate-weekly \
-            --hf-repo "$HF_DATASET_REPO" \
-            --build-dir _build \
-            --week "${{ steps.week.outputs.week }}" \
-            --parquet
+          echo "## Weekly Dataset Consolidation" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Downloaded all data/*.parquet shards, deduplicated by ID, re-uploaded clean shards." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- [HuggingFace Dataset](https://huggingface.co/datasets/voilaj/swiss-caselaw)" >> $GITHUB_STEP_SUMMARY

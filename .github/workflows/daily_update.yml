@@ -155,6 +155,11 @@ jobs:
           DATE="$(date -u +%F)"
           python -m caselaw_pipeline.cli publish-delta --build-dir _build --date "$DATE" --parquet
 
+      - name: Append delta to dataset
+        run: |
+          DATE="$(date -u +%F)"
+          python -m caselaw_pipeline.cli append-to-data --build-dir _build --date "$DATE"
+
       - name: Write job summary
         run: |
           echo "## Daily Update Complete" >> $GITHUB_STEP_SUMMARY

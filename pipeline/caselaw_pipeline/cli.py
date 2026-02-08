@@ -222,6 +222,68 @@ def cmd_publish_snapshot(args: argparse.Namespace) -> None:
     log.info("Published snapshot %s and updated manifest", week)
 
 
+def cmd_append_to_data(args: argparse.Namespace) -> None:
+    """Upload delta parquet to data/ so load_dataset() sees it immediately.
+
+    Aligns the delta schema to match the base dataset schema (column names and order).
+    """
+    import pyarrow.parquet as pq
+    import pyarrow as pa
+
+    build_dir = Path(args.build_dir).resolve()
+    date = args.date
+    hf_repo = args.hf_repo or _env("HF_DATASET_REPO")
+    hf_token = args.hf_token or _env("HF_TOKEN")
+
+    work = build_dir / "delta" / date
+    delta_parquet = work / f"delta-{date}.parquet"
+
+    if not delta_parquet.exists():
+        raise SystemExit(f"Missing build artifact: {delta_parquet}")
+
+    # Read delta and check it has rows
+    table = pq.read_table(delta_parquet)
+    if table.num_rows == 0:
+        log.info("Delta parquet has 0 rows, skipping append-to-data")
+        return
+
+    # Align schema to match base dataset:
+    # Base: id, source_id, source_name, level, canton, court, chamber, docket,
+    #        decision_date, published_date, title, language, url, pdf_url, content_text
+    # Delta: id, source_id, source_name, level, canton, court, chamber, language, docket,
+    #         decision_date, publication_date, title, url, pdf_url, content_text,
+    #         content_sha256, fetched_at, updated_at
+    BASE_COLS = [
+        "id", "source_id", "source_name", "level", "canton", "court", "chamber",
+        "docket", "decision_date", "published_date", "title", "language",
+        "url", "pdf_url", "content_text",
+    ]
+    RENAMES = {"publication_date": "published_date"}
+
+    # Rename columns
+    col_names = table.column_names
+    for old_name, new_name in RENAMES.items():
+        if old_name in col_names and new_name not in col_names:
+            idx = col_names.index(old_name)
+            table = table.rename_columns(
+                [new_name if c == old_name else c for c in col_names]
+            )
+            col_names = table.column_names
+
+    # Select only base columns (in order)
+    columns_to_select = [c for c in BASE_COLS if c in table.column_names]
+    table = table.select(columns_to_select)
+
+    # Write aligned parquet
+    aligned_path = work / f"delta-{date}-aligned.parquet"
+    pq.write_table(table, aligned_path, compression="zstd")
+
+    path_in_repo = f"data/delta-{date}.parquet"
+    upload_file(aligned_path, hf_repo, path_in_repo, hf_token,
+                commit_message=f"daily delta {date}")
+    log.info("Appended delta to data/: %s (%d rows)", path_in_repo, table.num_rows)
+
+
 def cmd_consolidate_weekly(args: argparse.Namespace) -> None:
     """
     Consolidation workflow:
@@ -312,6 +374,115 @@ def cmd_consolidate_weekly(args: argparse.Namespace) -> None:
     log.info("Weekly consolidation published: %s", week)
 
 
+def cmd_consolidate_data(args: argparse.Namespace) -> None:
+    """Merge delta-*.parquet files in data/ into a single file; remove duplicates against base.
+
+    Lightweight: downloads delta files fully + only ID column from base shards.
+    Base shards (train-*) are never fully downloaded — only their IDs.
+    """
+    hf_repo = args.hf_repo or _env("HF_DATASET_REPO")
+    hf_token = args.hf_token or _env("HF_TOKEN")
+
+    build_dir = Path(args.build_dir).resolve()
+    work = build_dir / "consolidate-data"
+    if work.exists():
+        shutil.rmtree(work)
+    work.mkdir(parents=True, exist_ok=True)
+
+    import pyarrow.parquet as pq
+    import pyarrow as pa
+    from huggingface_hub import HfApi
+
+    api = HfApi(token=hf_token)
+
+    # List all parquet files in data/
+    all_files = [
+        f.rfilename for f in api.list_repo_tree(hf_repo, path_in_repo="data", repo_type="dataset")
+        if f.rfilename.endswith(".parquet")
+    ]
+
+    base_files = [f for f in all_files if "delta-" not in f.split("/")[-1]]
+    delta_files = [f for f in all_files if "delta-" in f.split("/")[-1]]
+
+    log.info("Base shards: %d, Delta files: %d", len(base_files), len(delta_files))
+
+    if not delta_files:
+        log.info("No delta files to consolidate")
+        return
+
+    download_dir = work / "download"
+    download_dir.mkdir()
+
+    # Step 1: Collect IDs from base shards (only ID column — minimal memory)
+    base_ids = set()
+    for fname in base_files:
+        local = Path(api.hf_hub_download(hf_repo, fname, repo_type="dataset", local_dir=str(download_dir)))
+        id_col = pq.read_table(local, columns=["id"]).column("id").to_pylist()
+        base_ids.update(id_col)
+        log.info("  Base %s: %d IDs", fname.split("/")[-1], len(id_col))
+    log.info("Total base IDs: %d", len(base_ids))
+
+    # Step 2: Read delta files, align schema, merge and deduplicate
+    RENAMES = {"publication_date": "published_date"}
+    delta_tables = []
+    for fname in delta_files:
+        local = Path(api.hf_hub_download(hf_repo, fname, repo_type="dataset", local_dir=str(download_dir)))
+        dt = pq.read_table(local)
+        # Rename columns to match base
+        col_names = dt.column_names
+        for old_name, new_name in RENAMES.items():
+            if old_name in col_names and new_name not in col_names:
+                dt = dt.rename_columns([new_name if c == old_name else c for c in col_names])
+                col_names = dt.column_names
+        delta_tables.append(dt)
+        log.info("  Delta %s: %d rows", fname.split("/")[-1], dt.num_rows)
+
+    merged = pa.concat_tables(delta_tables)
+    log.info("Merged deltas: %d rows", merged.num_rows)
+
+    # Deduplicate within deltas (keep last occurrence)
+    ids = merged.column("id").to_pylist()
+    seen = set()
+    keep_mask = []
+    for i in range(len(ids) - 1, -1, -1):
+        if ids[i] not in seen:
+            seen.add(ids[i])
+            keep_mask.append(True)
+        else:
+            keep_mask.append(False)
+    keep_mask.reverse()
+    merged = merged.filter(pa.array(keep_mask))
+    log.info("After self-dedup: %d rows", merged.num_rows)
+
+    # Remove rows already in base
+    ids = merged.column("id").to_pylist()
+    novel_mask = pa.array([uid not in base_ids for uid in ids])
+    novel = merged.filter(novel_mask)
+    log.info("Novel (not in base): %d rows", novel.num_rows)
+
+    # Step 3: Delete old delta files from data/
+    for fname in delta_files:
+        api.delete_file(fname, hf_repo, repo_type="dataset",
+                        commit_message=f"consolidate: remove {fname.split('/')[-1]}")
+    log.info("Deleted %d delta files from data/", len(delta_files))
+
+    # Step 4: Upload merged novel decisions as single file (if any)
+    if novel.num_rows > 0:
+        # Select only columns that exist in base shards
+        base_cols = [c for c in ["id", "source_id", "source_name", "level", "canton", "court",
+                                  "chamber", "docket", "decision_date", "published_date", "title",
+                                  "language", "url", "pdf_url", "content_text"]
+                     if c in novel.column_names]
+        novel = novel.select(base_cols)
+        out_path = work / "delta-consolidated.parquet"
+        pq.write_table(novel, out_path, compression="zstd")
+        upload_file(out_path, hf_repo, "data/delta-consolidated.parquet", hf_token,
+                    commit_message=f"consolidate: {novel.num_rows} novel decisions")
+        log.info("Uploaded consolidated delta: %d rows", novel.num_rows)
+    else:
+        log.info("No novel decisions — all deltas were duplicates of base")
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="caselaw-pipeline")
     p.add_argument("--log-level", default=os.environ.get("LOG_LEVEL", "INFO"))
@@ -354,6 +525,21 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--hf-token", default=os.environ.get("HF_TOKEN"))
     s.add_argument("--parquet", action="store_true")
     s.set_defaults(fn=cmd_publish_snapshot)
+
+    # append-to-data
+    s = sub.add_parser("append-to-data", help="Upload delta parquet to data/ for immediate load_dataset() visibility")
+    s.add_argument("--build-dir", required=True)
+    s.add_argument("--date", required=True)
+    s.add_argument("--hf-repo", default=os.environ.get("HF_DATASET_REPO"))
+    s.add_argument("--hf-token", default=os.environ.get("HF_TOKEN"))
+    s.set_defaults(fn=cmd_append_to_data)
+
+    # consolidate-data
+    s = sub.add_parser("consolidate-data", help="Merge delta files in data/, deduplicate against base shards")
+    s.add_argument("--hf-repo", default=os.environ.get("HF_DATASET_REPO"))
+    s.add_argument("--hf-token", default=os.environ.get("HF_TOKEN"))
+    s.add_argument("--build-dir", required=True)
+    s.set_defaults(fn=cmd_consolidate_data)
 
     # consolidate-weekly
     s = sub.add_parser("consolidate-weekly", help="Download snapshot + deltas; publish consolidated weekly snapshot")

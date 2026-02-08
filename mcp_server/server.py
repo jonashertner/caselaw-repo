@@ -89,47 +89,155 @@ def _fts_join(schema: str) -> str:
 
 
 def _download_from_huggingface() -> Optional[str]:
-    """Download SQLite database from HuggingFace.
+    """Download SQLite database from HuggingFace using the manifest.
 
-    Tries compressed (swisslaw.db.zst) first, falls back to uncompressed (swisslaw.db).
+    Reads artifacts/manifest.json to find the current snapshot path,
+    downloads and decompresses it. Falls back to applying deltas if
+    no snapshot exists yet.
     """
+    import httpx as _httpx
+
+    HF_REPO = "voilaj/swiss-caselaw"
+    MANIFEST_URL = f"https://huggingface.co/datasets/{HF_REPO}/resolve/main/artifacts/manifest.json"
+    BASE_URL = f"https://huggingface.co/datasets/{HF_REPO}/resolve/main/"
+
+    cache_dir = Path.home() / ".cache" / "swiss-caselaw"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    db_path = cache_dir / "swisslaw.db"
+
+    # Return cached DB if fresh (less than 6 hours old)
+    if db_path.exists() and db_path.stat().st_size > 0:
+        import time
+        age_hours = (time.time() - db_path.stat().st_mtime) / 3600
+        if age_hours < 6:
+            print(f"Using cached database ({age_hours:.1f}h old)", file=sys.stderr)
+            return str(db_path)
+
     try:
-        from huggingface_hub import hf_hub_download
+        # Fetch manifest
+        print("Fetching manifest from HuggingFace...", file=sys.stderr)
+        resp = _httpx.get(MANIFEST_URL, follow_redirects=True, timeout=30)
+        resp.raise_for_status()
+        manifest = resp.json()
 
-        # Try compressed version first (artifacts/swisslaw.db.zst)
-        for zst_filename in ("artifacts/swisslaw.db.zst", "swisslaw.db.zst"):
-            try:
-                print(f"Trying {zst_filename} from HuggingFace...", file=sys.stderr)
-                zst_path = hf_hub_download(
-                    repo_id="voilaj/swiss-caselaw",
-                    filename=zst_filename,
-                    repo_type="dataset",
-                )
-                # Decompress to a sibling file
-                db_path = zst_path.removesuffix(".zst") if zst_path.endswith(".zst") else zst_path + ".decompressed"
-                if not Path(db_path).exists() or Path(db_path).stat().st_size == 0:
-                    print("Decompressing zstd...", file=sys.stderr)
-                    import zstandard as zstd
-                    dctx = zstd.ZstdDecompressor()
-                    with open(zst_path, "rb") as ifh, open(db_path, "wb") as ofh:
-                        dctx.copy_stream(ifh, ofh)
-                print(f"Downloaded and decompressed to: {db_path}", file=sys.stderr)
-                return db_path
-            except Exception:
-                continue
+        snapshot = manifest.get("snapshot")
+        if snapshot and snapshot.get("sqlite_zst"):
+            zst_info = snapshot["sqlite_zst"]
+            zst_url = BASE_URL + zst_info["path"]
+            zst_local = cache_dir / "snapshot.sqlite.zst"
 
-        # Fallback to uncompressed
-        print("Downloading swisslaw.db from HuggingFace...", file=sys.stderr)
-        path = hf_hub_download(
-            repo_id="voilaj/swiss-caselaw",
-            filename="swisslaw.db",
-            repo_type="dataset",
-        )
-        print(f"Downloaded to: {path}", file=sys.stderr)
-        return path
+            print(f"Downloading snapshot ({zst_info.get('bytes', '?')} bytes)...", file=sys.stderr)
+            with _httpx.stream("GET", zst_url, follow_redirects=True, timeout=300) as r:
+                r.raise_for_status()
+                with open(zst_local, "wb") as f:
+                    for chunk in r.iter_bytes():
+                        if chunk:
+                            f.write(chunk)
+
+            # Decompress
+            print("Decompressing snapshot...", file=sys.stderr)
+            import zstandard as zstd
+            dctx = zstd.ZstdDecompressor()
+            tmp_db = cache_dir / "swisslaw.db.tmp"
+            with open(zst_local, "rb") as ifh, open(tmp_db, "wb") as ofh:
+                dctx.copy_stream(ifh, ofh)
+            tmp_db.replace(db_path)
+            zst_local.unlink(missing_ok=True)
+
+            # Apply any accumulated deltas on top of the snapshot
+            _apply_hf_deltas(manifest, BASE_URL, cache_dir, db_path)
+
+            print(f"Database ready: {db_path}", file=sys.stderr)
+            return str(db_path)
+
+        # No snapshot — try building from deltas alone
+        deltas = manifest.get("deltas") or []
+        if deltas:
+            print(f"No snapshot, applying {len(deltas)} deltas...", file=sys.stderr)
+            # Use the largest delta as the base (it likely contains the most data)
+            largest = max(deltas, key=lambda d: d["sqlite_zst"].get("bytes", 0))
+            zst_url = BASE_URL + largest["sqlite_zst"]["path"]
+            zst_local = cache_dir / "base-delta.sqlite.zst"
+
+            with _httpx.stream("GET", zst_url, follow_redirects=True, timeout=300) as r:
+                r.raise_for_status()
+                with open(zst_local, "wb") as f:
+                    for chunk in r.iter_bytes():
+                        if chunk:
+                            f.write(chunk)
+
+            import zstandard as zstd
+            dctx = zstd.ZstdDecompressor()
+            tmp_db = cache_dir / "swisslaw.db.tmp"
+            with open(zst_local, "rb") as ifh, open(tmp_db, "wb") as ofh:
+                dctx.copy_stream(ifh, ofh)
+            tmp_db.replace(db_path)
+            zst_local.unlink(missing_ok=True)
+
+            print(f"Database ready (from delta): {db_path}", file=sys.stderr)
+            return str(db_path)
+
+        print("No snapshot or deltas found in manifest.", file=sys.stderr)
+        return None
+
     except Exception as e:
         print(f"Failed to download from HuggingFace: {e}", file=sys.stderr)
+        # If we have a cached DB (even stale), use it
+        if db_path.exists() and db_path.stat().st_size > 0:
+            print("Falling back to cached database.", file=sys.stderr)
+            return str(db_path)
         return None
+
+
+def _apply_hf_deltas(manifest: dict, base_url: str, cache_dir: Path, db_path: Path) -> None:
+    """Apply delta SQLite files from manifest on top of the snapshot."""
+    import httpx as _httpx
+
+    deltas = manifest.get("deltas") or []
+    if not deltas:
+        return
+
+    snapshot_week = (manifest.get("snapshot") or {}).get("week", "")
+    applied = 0
+
+    for delta in deltas:
+        zst_url = base_url + delta["sqlite_zst"]["path"]
+        zst_local = cache_dir / f"delta-{delta['date']}.sqlite.zst"
+
+        try:
+            with _httpx.stream("GET", zst_url, follow_redirects=True, timeout=120) as r:
+                r.raise_for_status()
+                with open(zst_local, "wb") as f:
+                    for chunk in r.iter_bytes():
+                        if chunk:
+                            f.write(chunk)
+
+            import zstandard as zstd
+            dctx = zstd.ZstdDecompressor()
+            delta_db = cache_dir / f"delta-{delta['date']}.sqlite"
+            with open(zst_local, "rb") as ifh, open(delta_db, "wb") as ofh:
+                dctx.copy_stream(ifh, ofh)
+
+            # ATTACH and INSERT OR REPLACE
+            conn = sqlite3.connect(str(db_path))
+            conn.execute(f"ATTACH DATABASE '{delta_db}' AS delta")
+            cols = [r[1] for r in conn.execute("PRAGMA delta.table_info(decisions)").fetchall()]
+            col_list = ", ".join(cols)
+            conn.execute(f"INSERT OR REPLACE INTO decisions ({col_list}) SELECT {col_list} FROM delta.decisions")
+            conn.execute("DETACH DATABASE delta")
+            conn.commit()
+            conn.close()
+
+            delta_db.unlink(missing_ok=True)
+            zst_local.unlink(missing_ok=True)
+            applied += 1
+
+        except Exception as e:
+            print(f"  Delta {delta['date']} failed: {e}", file=sys.stderr)
+            continue
+
+    if applied:
+        print(f"  Applied {applied} deltas.", file=sys.stderr)
 
 
 def get_db() -> tuple[Any, str]:

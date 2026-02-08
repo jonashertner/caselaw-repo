@@ -4,9 +4,6 @@ name: Verify Data Gaps (entscheidsuche.ch)
 # It uses entscheidsuche.ch as a verification source only (not primary data source).
 
 on:
-  schedule:
-    # Run weekly on Sunday at 6 AM UTC
-    - cron: '0 6 * * 0'
   workflow_dispatch:
     inputs:
       canton:

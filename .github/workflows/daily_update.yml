@@ -160,6 +160,20 @@ jobs:
           DATE="$(date -u +%F)"
           python -m caselaw_pipeline.cli append-to-data --build-dir _build --date "$DATE"
 
+      # ── Consolidation: merge deltas and update snapshot ──────────────
+      - name: Consolidate data shards
+        run: |
+          python -m caselaw_pipeline.cli consolidate-data \
+            --build-dir _build
+        continue-on-error: true
+
+      - name: Update SQLite snapshot
+        run: |
+          python -m caselaw_pipeline.cli consolidate-weekly \
+            --build-dir _build \
+            --zstd-level 10
+        continue-on-error: true
+
       - name: Write job summary
         run: |
           echo "## Daily Update Complete" >> $GITHUB_STEP_SUMMARY
